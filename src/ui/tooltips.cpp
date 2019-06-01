@@ -1,5 +1,6 @@
 // Aseprite UI Library
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This file is released under the terms of the MIT license.
 // Read LICENSE.txt for more information.
@@ -10,7 +11,6 @@
 
 #include "ui/tooltips.h"
 
-#include "base/unique_ptr.h"
 #include "gfx/size.h"
 #include "ui/graphics.h"
 #include "ui/intern.h"
@@ -51,6 +51,8 @@ TooltipManager::~TooltipManager()
 
 void TooltipManager::addTooltipFor(Widget* widget, const std::string& text, int arrowAlign)
 {
+  ASSERT(!widget->hasFlags(IGNORE_MOUSE));
+
   m_tips[widget] = TipInfo(text, arrowAlign);
 }
 
@@ -66,7 +68,9 @@ bool TooltipManager::onProcessMessage(Message* msg)
   switch (msg->type()) {
 
     case kMouseEnterMessage: {
-      for (Widget* widget : msg->recipients()) {
+      // Tooltips are only for widgets that can directly get the mouse
+      // (get the kMouseEnterMessage directly).
+      if (Widget* widget = msg->recipient()) {
         Tips::iterator it = m_tips.find(widget);
         if (it != m_tips.end()) {
           m_target.widget = it->first;
@@ -80,7 +84,7 @@ bool TooltipManager::onProcessMessage(Message* msg)
           m_timer->start();
         }
       }
-      return false;
+      break;
     }
 
     case kKeyDownMessage:

@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2016  David Capello
 //
 // This program is distributed under the terms of
@@ -26,7 +27,6 @@ using namespace doc;
 namespace {
 
   struct GetPixelsDelegate {
-    uint32_t color;
     int div;
     const int* matrixData;
 
@@ -34,7 +34,6 @@ namespace {
       div = matrix->getDiv();
       matrixData = &matrix->value(0, 0);
     }
-
   };
 
   struct GetPixelsDelegateRgba : public GetPixelsDelegate {
@@ -45,8 +44,7 @@ namespace {
       r = g = b = a = 0;
     }
 
-    void operator()(RgbTraits::pixel_t color)
-    {
+    void operator()(RgbTraits::pixel_t color) {
       if (*matrixData) {
         if (rgba_geta(color) == 0)
           div -= *matrixData;
@@ -59,7 +57,6 @@ namespace {
       }
       matrixData++;
     }
-
   };
 
   struct GetPixelsDelegateGrayscale : public GetPixelsDelegate {
@@ -70,8 +67,7 @@ namespace {
       v = a = 0;
     }
 
-    void operator()(GrayscaleTraits::pixel_t color)
-    {
+    void operator()(GrayscaleTraits::pixel_t color) {
       if (*matrixData) {
         if (graya_geta(color) == 0)
           div -= *matrixData;
@@ -82,7 +78,6 @@ namespace {
       }
       matrixData++;
     }
-
   };
 
   struct GetPixelsDelegateIndexed : public GetPixelsDelegate {
@@ -96,8 +91,7 @@ namespace {
       r = g = b = a = index = 0;
     }
 
-    void operator()(IndexedTraits::pixel_t color)
-    {
+    void operator()(IndexedTraits::pixel_t color) {
       if (*matrixData) {
         index += color * (*matrixData);
         color_t rgba = pal->getEntry(color);
@@ -112,7 +106,6 @@ namespace {
       }
       matrixData++;
     }
-
   };
 
 }
@@ -126,7 +119,6 @@ ConvolutionMatrixFilter::ConvolutionMatrixFilter()
 void ConvolutionMatrixFilter::setMatrix(const base::SharedPtr<ConvolutionMatrix>& matrix)
 {
   m_matrix = matrix;
-  m_lines.resize(matrix->getHeight());
 }
 
 void ConvolutionMatrixFilter::setTiledMode(TiledMode tiledMode)

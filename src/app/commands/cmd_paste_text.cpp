@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -22,9 +23,9 @@
 #include "base/bind.h"
 #include "base/fs.h"
 #include "base/string.h"
-#include "base/unique_ptr.h"
 #include "doc/image.h"
 #include "doc/image_ref.h"
+#include "render/dithering.h"
 #include "render/ordered_dither.h"
 #include "render/quantization.h"
 #include "ui/system.h"
@@ -38,7 +39,6 @@ static std::string last_text_used;
 class PasteTextCommand : public Command {
 public:
   PasteTextCommand();
-  Command* clone() const override { return new PasteTextCommand(*this); }
 
 protected:
   bool onEnabled(Context* ctx) override;
@@ -138,7 +138,7 @@ private:
   }
 
   std::string m_face;
-  base::UniquePtr<FontPopup> m_fontPopup;
+  std::unique_ptr<FontPopup> m_fontPopup;
 };
 
 void PasteTextCommand::onExecute(Context* ctx)
@@ -185,8 +185,7 @@ void PasteTextCommand::onExecute(Context* ctx)
         image.reset(
           render::convert_pixel_format(
             image.get(), NULL, sprite->pixelFormat(),
-            render::DitheringAlgorithm::None,
-            render::DitheringMatrix(),
+            render::Dithering(),
             rgbmap, sprite->palette(editor->frame()),
             false, 0));
       }

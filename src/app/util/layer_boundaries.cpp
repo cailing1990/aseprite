@@ -14,7 +14,7 @@
 #include "app/console.h"
 #include "app/context_access.h"
 #include "app/modules/gui.h"
-#include "app/transaction.h"
+#include "app/tx.h"
 #include "app/ui_context.h"
 #include "doc/cel.h"
 #include "doc/document.h"
@@ -97,9 +97,8 @@ void select_layer_boundaries(Layer* layer,
 
   try {
     ContextWriter writer(UIContext::instance(), 500);
-    app::Document* doc = writer.document();
-    Sprite* spr = layer->sprite();
-    ASSERT(doc == spr->document());
+    Doc* doc = writer.document();
+    ASSERT(doc == layer->sprite()->document());
 
     if (doc->isMaskVisible()) {
       switch (op) {
@@ -121,9 +120,9 @@ void select_layer_boundaries(Layer* layer,
       }
     }
 
-    Transaction transaction(writer.context(), "Select Layer Boundaries", DoesntModifyDocument);
-    transaction.execute(new cmd::SetMask(doc, &newMask));
-    transaction.commit();
+    Tx tx(writer.context(), "Select Layer Boundaries", DoesntModifyDocument);
+    tx(new cmd::SetMask(doc, &newMask));
+    tx.commit();
 
     doc->resetTransformation();
     doc->generateMaskBoundaries();

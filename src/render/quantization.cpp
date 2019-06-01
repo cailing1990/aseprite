@@ -1,4 +1,5 @@
 // Aseprite Render Library
+// Copyright (C) 2019 Igara Studio S.A.
 // Copyright (c) 2001-2018 David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -10,7 +11,6 @@
 
 #include "render/quantization.h"
 
-#include "base/unique_ptr.h"
 #include "doc/image_impl.h"
 #include "doc/layer.h"
 #include "doc/palette.h"
@@ -20,6 +20,8 @@
 #include "doc/sprite.h"
 #include "gfx/hsv.h"
 #include "gfx/rgb.h"
+#include "render/dithering.h"
+#include "render/error_diffusion.h"
 #include "render/ordered_dither.h"
 #include "render/render.h"
 #include "render/task_delegate.h"
@@ -27,6 +29,7 @@
 #include <algorithm>
 #include <limits>
 #include <map>
+#include <memory>
 #include <vector>
 
 namespace render {
@@ -40,7 +43,8 @@ Palette* create_palette_from_sprite(
   const frame_t toFrame,
   const bool withAlpha,
   Palette* palette,
-  TaskDelegate* delegate)
+  TaskDelegate* delegate,
+  const bool newBlend)
 {
   PaletteOptimizer optimizer;
 
@@ -53,6 +57,7 @@ Palette* create_palette_from_sprite(
 
   // Feed the optimizer with all rendered frames
   render::Render render;
+  render.setNewBlend(newBlend);
   for (frame_t frame=fromFrame; frame<=toFrame; ++frame) {
     render.renderSprite(flat_image.get(), sprite, frame);
     optimizer.feedWithImage(flat_image.get(), withAlpha);
@@ -80,8 +85,7 @@ Image* convert_pixel_format(
   const Image* image,
   Image* new_image,
   PixelFormat pixelFormat,
-  DitheringAlgorithm ditheringAlgorithm,
-  const DitheringMatrix& ditheringMatrix,
+  const Dithering& dithering,
   const RgbMap* rgbmap,
   const Palette* palette,
   bool is_background,
@@ -95,19 +99,23 @@ Image* convert_pixel_format(
   // RGB -> Indexed with ordered dithering
   if (image->pixelFormat() == IMAGE_RGB &&
       pixelFormat == IMAGE_INDEXED &&
-      ditheringAlgorithm != DitheringAlgorithm::None) {
-    base::UniquePtr<DitheringAlgorithmBase> dither;
-    switch (ditheringAlgorithm) {
+      dithering.algorithm() != DitheringAlgorithm::None) {
+    std::unique_ptr<DitheringAlgorithmBase> dither;
+    switch (dithering.algorithm()) {
       case DitheringAlgorithm::Ordered:
         dither.reset(new OrderedDither2(is_background ? -1: new_mask_color));
         break;
       case DitheringAlgorithm::Old:
         dither.reset(new OrderedDither(is_background ? -1: new_mask_color));
         break;
+      case DitheringAlgorithm::ErrorDiffusion:
+        dither.reset(new ErrorDiffusionDither(is_background ? -1: new_mask_color));
+        break;
     }
     if (dither)
       dither_rgb_image_to_indexed(
-        *dither, ditheringMatrix, image, new_image, 0, 0, rgbmap, palette, delegate);
+        *dither, dithering,
+        image, new_image, rgbmap, palette, delegate);
     return new_image;
   }
 

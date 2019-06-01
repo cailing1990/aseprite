@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -11,113 +12,198 @@
 #include "app/thumbnail_generator.h"
 
 #include "app/app.h"
-#include "app/document.h"
+#include "app/cmd/convert_color_profile.h"
+#include "app/doc.h"
 #include "app/file/file.h"
 #include "app/file_system.h"
-#include "app/ui/editor/editor_render.h"
 #include "base/bind.h"
 #include "base/scoped_lock.h"
 #include "base/thread.h"
 #include "doc/algorithm/rotate.h"
-#include "doc/conversion_she.h"
+#include "doc/conversion_to_surface.h"
 #include "doc/image.h"
 #include "doc/palette.h"
 #include "doc/primitives.h"
 #include "doc/sprite.h"
-#include "she/system.h"
+#include "os/system.h"
+#include "render/projection.h"
+#include "render/render.h"
 
-#define MAX_THUMBNAIL_SIZE              128
+#include <memory>
+#include <thread>
+
+#define MAX_THUMBNAIL_SIZE   128
+#define THUMB_TRACE(...)
 
 namespace app {
 
 class ThumbnailGenerator::Worker {
 public:
-  Worker(FileOp* fop, IFileItem* fileitem)
-    : m_fop(fop)
-    , m_fileitem(fileitem)
-    , m_thumbnail(NULL)
-    , m_palette(NULL)
+  Worker(base::concurrent_queue<ThumbnailGenerator::Item>& queue)
+    : m_queue(queue)
+    , m_fop(nullptr)
+    , m_isDone(false)
     , m_thread(base::Bind<void>(&Worker::loadBgThread, this)) {
   }
 
   ~Worker() {
-    m_fop->stop();
+    {
+      base::scoped_lock lock(m_mutex);
+      if (m_fop)
+        m_fop->stop();
+    }
     m_thread.join();
   }
 
-  IFileItem* getFileItem() { return m_fileitem; }
-  bool isDone() const { return m_fop->isDone(); }
-  double getProgress() const { return m_fop->progress(); }
+  void stop() const {
+    base::scoped_lock lock(m_mutex);
+    if (m_fop)
+      m_fop->stop();
+  }
+
+  bool isDone() const {
+    return m_isDone;
+  }
+
+  void updateProgress() {
+    base::scoped_lock lock(m_mutex);
+    if (m_item.fileitem && m_item.fop) {
+      double progress = m_item.fop->progress();
+      if (progress > m_item.fileitem->getThumbnailProgress())
+        m_item.fileitem->setThumbnailProgress(progress);
+    }
+  }
 
 private:
-  void loadBgThread() {
+  void loadItem() {
+    ASSERT(!m_fop);
     try {
+      {
+        base::scoped_lock lock(m_mutex);
+        m_fop = m_item.fop;
+        ASSERT(m_fop);
+      }
+
+      THUMB_TRACE("FOP loading thumbnail: %s\n",
+                  m_item.fileitem->fileName().c_str());
+
+      // Load the file
       m_fop->operate(nullptr);
 
-      // Post load
-      m_fop->postLoad();
+      // Don't call post-load because postLoad() needs user interaction.
+      //m_fop->postLoad();
 
-      // Convert the loaded document into the she::Surface.
+      // Convert the loaded document into the os::Surface.
       const Sprite* sprite =
         (m_fop->document() &&
          m_fop->document()->sprite() ?
          m_fop->document()->sprite(): nullptr);
 
+      std::unique_ptr<Image> thumbnailImage;
+      std::unique_ptr<Palette> palette;
       if (!m_fop->isStop() && sprite) {
         // The palette to convert the Image
-        m_palette.reset(new Palette(*sprite->palette(frame_t(0))));
+        palette.reset(new Palette(*sprite->palette(frame_t(0))));
 
-        // Render first frame of the sprite in 'image'
-        base::UniquePtr<Image> image(Image::create(
-            IMAGE_RGB, sprite->width(), sprite->height()));
+        // Special case for indexed images:
+        // If the sprite is transparent -> set the transparent color index alpha = 0
+        if (sprite->colorMode() == ColorMode::INDEXED &&
+            !sprite->backgroundLayer()) {
+          int i = sprite->transparentColor();
+          if (i >= 0 && i < int(palette->size()))
+            palette->setEntry(i, doc::rgba(0, 0, 0, 0));
+        }
 
-        EditorRender render;
-        render.setupBackground(NULL, image->pixelFormat());
-        render.renderSprite(image, sprite, frame_t(0));
+        const int w = sprite->width()*sprite->pixelRatio().w;
+        const int h = sprite->height()*sprite->pixelRatio().h;
 
         // Calculate the thumbnail size
-        int thumb_w = MAX_THUMBNAIL_SIZE * image->width() / MAX(image->width(), image->height());
-        int thumb_h = MAX_THUMBNAIL_SIZE * image->height() / MAX(image->width(), image->height());
-        if (MAX(thumb_w, thumb_h) > MAX(image->width(), image->height())) {
-          thumb_w = image->width();
-          thumb_h = image->height();
+        int thumb_w = MAX_THUMBNAIL_SIZE * w / MAX(w, h);
+        int thumb_h = MAX_THUMBNAIL_SIZE * h / MAX(w, h);
+        if (MAX(thumb_w, thumb_h) > MAX(w, h)) {
+          thumb_w = w;
+          thumb_h = h;
         }
         thumb_w = MID(1, thumb_w, MAX_THUMBNAIL_SIZE);
         thumb_h = MID(1, thumb_h, MAX_THUMBNAIL_SIZE);
 
         // Stretch the 'image'
-        m_thumbnail.reset(Image::create(image->pixelFormat(), thumb_w, thumb_h));
-        clear_image(m_thumbnail, 0);
-        algorithm::scale_image(m_thumbnail, image,
-                               0, 0, thumb_w, thumb_h,
-                               0, 0, image->width(), image->height());
+        thumbnailImage.reset(
+          Image::create(
+            sprite->pixelFormat(), thumb_w, thumb_h));
+
+        render::Projection proj(sprite->pixelRatio(),
+                                render::Zoom(thumb_w, w));
+        render::Render render;
+        render.setBgType(render::BgType::TRANSPARENT);
+        render.setProjection(proj);
+        render.renderSprite(
+          thumbnailImage.get(), sprite, frame_t(0),
+          gfx::Clip(0, 0, 0, 0, w, h));
+
+        // Convert the image to sRGB color space
+        auto cs = sprite->colorSpace();
+        if (m_fop->preserveColorProfile() &&
+            cs && !cs->nearlyEqual(*gfx::ColorSpace::MakeSRGB())) {
+          app::cmd::convert_color_profile(
+            thumbnailImage.get(), palette.get(),
+            cs, gfx::ColorSpace::MakeSRGB());
+        }
       }
 
       // Close file
       delete m_fop->releaseDocument();
 
       // Set the thumbnail of the file-item.
-      if (m_thumbnail) {
-        she::Surface* thumbnail = she::instance()->createRgbaSurface(
-          m_thumbnail->width(),
-          m_thumbnail->height());
+      if (thumbnailImage) {
+        os::Surface* thumbnail =
+          os::instance()->createRgbaSurface(
+            thumbnailImage->width(),
+            thumbnailImage->height());
 
-        convert_image_to_surface(m_thumbnail, m_palette, thumbnail,
-          0, 0, 0, 0, m_thumbnail->width(), m_thumbnail->height());
+        convert_image_to_surface(
+          thumbnailImage.get(), palette.get(), thumbnail,
+          0, 0, 0, 0, thumbnailImage->width(), thumbnailImage->height());
 
-        m_fileitem->setThumbnail(thumbnail);
+        m_item.fileitem->setThumbnail(thumbnail);
       }
+
+      THUMB_TRACE("FOP done with thumbnail: %s %s\n",
+                  m_item.fileitem->fileName().c_str(),
+                  (m_fop->isStop() ? " (stop)": ""));
+
+      // Reset the m_item (first the fileitem so this worker is not
+      // associated to this fileitem anymore, and then the FileOp).
+      m_item.fileitem = nullptr;
     }
     catch (const std::exception& e) {
       m_fop->setError("Error loading file:\n%s", e.what());
     }
     m_fop->done();
+    {
+      base::scoped_lock lock(m_mutex);
+      m_item.fop = nullptr;
+      delete m_fop;
+      m_fop = nullptr;
+    }
+    ASSERT(!m_fop);
   }
 
-  base::UniquePtr<FileOp> m_fop;
-  IFileItem* m_fileitem;
-  base::UniquePtr<Image> m_thumbnail;
-  base::UniquePtr<Palette> m_palette;
+  void loadBgThread() {
+    while (!m_queue.empty()) {
+      while (m_queue.try_pop(m_item)) {
+        loadItem();
+      }
+      base::this_thread::yield();
+    }
+    m_isDone = true;
+  }
+
+  base::concurrent_queue<Item>& m_queue;
+  app::ThumbnailGenerator::Item m_item;
+  FileOp* m_fop;
+  mutable base::mutex m_mutex;
+  bool m_isDone;
   base::thread m_thread;
 };
 
@@ -128,7 +214,7 @@ static void delete_singleton(ThumbnailGenerator* singleton)
 
 ThumbnailGenerator* ThumbnailGenerator::instance()
 {
-  static ThumbnailGenerator* singleton = NULL;
+  static ThumbnailGenerator* singleton = nullptr;
   if (singleton == NULL) {
     singleton = new ThumbnailGenerator();
     App::instance()->Exit.connect(base::Bind<void>(&delete_singleton, singleton));
@@ -136,34 +222,24 @@ ThumbnailGenerator* ThumbnailGenerator::instance()
   return singleton;
 }
 
-ThumbnailGenerator::WorkerStatus ThumbnailGenerator::getWorkerStatus(IFileItem* fileitem, double& progress)
+ThumbnailGenerator::ThumbnailGenerator()
 {
-  base::scoped_lock hold(m_workersAccess);
-
-  for (WorkerList::iterator
-         it=m_workers.begin(), end=m_workers.end(); it!=end; ++it) {
-    Worker* worker = *it;
-    if (worker->getFileItem() == fileitem) {
-      if (worker->isDone())
-        return ThumbnailIsDone;
-      else {
-        progress = worker->getProgress();
-        return WorkingOnThumbnail;
-      }
-    }
-  }
-  return WithoutWorker;
+  int n = std::thread::hardware_concurrency()-1;
+  if (n < 1) n = 1;
+  m_maxWorkers = n;
 }
 
 bool ThumbnailGenerator::checkWorkers()
 {
   base::scoped_lock hold(m_workersAccess);
-  bool doingWork = !m_workers.empty();
+  bool doingWork = (!m_workers.empty());
 
   for (WorkerList::iterator
          it=m_workers.begin(); it != m_workers.end(); ) {
-    if ((*it)->isDone()) {
-      delete *it;
+    Worker* worker = *it;
+    worker->updateProgress();
+    if (worker->isDone()) {
+      delete worker;
       it = m_workers.erase(it);
     }
     else {
@@ -174,16 +250,43 @@ bool ThumbnailGenerator::checkWorkers()
   return doingWork;
 }
 
-void ThumbnailGenerator::addWorkerToGenerateThumbnail(IFileItem* fileitem)
+void ThumbnailGenerator::generateThumbnail(IFileItem* fileitem)
 {
-  double progress;
-
   if (fileitem->isBrowsable() ||
-      fileitem->getThumbnail() != NULL ||
-      getWorkerStatus(fileitem, progress) != WithoutWorker)
+      fileitem->getThumbnail())
     return;
 
-  base::UniquePtr<FileOp> fop(
+  if (fileitem->getThumbnailProgress() > 0.0) {
+    if (fileitem->getThumbnailProgress() == 0.00001) {
+      m_remainingItems.prioritize(
+        [fileitem](const Item& item) {
+          return (item.fileitem == fileitem);
+        });
+
+      // If there is no more workers running, we have to start a new
+      // one to process the m_remainingItems queue. How is it possible
+      // that a IFileItem has a thumbnail progress == 0.00001 but
+      // there is no workers?  This is an edge case where:
+      // 1. The Worker::loadBgThread() asks for the queue of remaining items
+      //    and it's empty, so the thread is going to be closed
+      // 2. We've just created a FOP for this IFileItem and ask for
+      //    available workers and we've already launch the max quantity
+      //    of possible workers (m_maxWorkers)
+      // 3. All worker threads are just closed so there is no more
+      //    worker for the remaining item in the queue.
+      if (m_workers.empty())
+        startWorker();
+    }
+    return;
+  }
+
+  // Set a starting progress so we don't enqueue the same item two times.
+  fileitem->setThumbnailProgress(0.00001);
+
+  THUMB_TRACE("Queue FOP thumbnail for %s\n",
+              fileitem->fileName().c_str());
+
+  std::unique_ptr<FileOp> fop(
     FileOp::createLoadDocumentOperation(
       nullptr,
       fileitem->fileName().c_str(),
@@ -195,34 +298,40 @@ void ThumbnailGenerator::addWorkerToGenerateThumbnail(IFileItem* fileitem)
   if (fop->hasError())
     return;
 
-  Worker* worker = new Worker(fop.release(), fileitem);
-  try {
-    base::scoped_lock hold(m_workersAccess);
-    m_workers.push_back(worker);
-  }
-  catch (...) {
-    delete worker;
-    throw;
-  }
+  m_remainingItems.push(Item(fileitem, fop.get()));
+  fop.release();
+
+  startWorker();
 }
 
 void ThumbnailGenerator::stopAllWorkers()
 {
-  base::thread* ptr = new base::thread(base::Bind<void>(&ThumbnailGenerator::stopAllWorkersBackground, this));
-  m_stopThread.reset(ptr);
-}
-
-void ThumbnailGenerator::stopAllWorkersBackground()
-{
-  WorkerList workersCopy;
-  {
-    base::scoped_lock hold(m_workersAccess);
-    workersCopy = m_workers;
-    m_workers.clear();
+  Item item;
+  while (!m_remainingItems.empty()) {
+    while (m_remainingItems.try_pop(item)) {
+      if (!item.fileitem->getThumbnail()) {
+        // Reset progress to 0.0 because the FileOp wasn't used and we
+        // will need to create it again if we require this FileItem
+        // thumbnail again.
+        item.fileitem->setThumbnailProgress(0.0);
+      }
+      delete item.fop;
+    }
   }
 
-  for (auto it=workersCopy.begin(), end=workersCopy.end(); it!=end; ++it)
-    delete *it;
+  base::scoped_lock hold(m_workersAccess);
+  for (auto worker : m_workers)
+    worker->stop();
+}
+
+void ThumbnailGenerator::startWorker()
+{
+  base::scoped_lock hold(m_workersAccess);
+  if (m_workers.size() < m_maxWorkers) {
+    std::unique_ptr<Worker> worker(new Worker(m_remainingItems));
+    m_workers.push_back(worker.get());
+    worker.release();
+  }
 }
 
 } // namespace app

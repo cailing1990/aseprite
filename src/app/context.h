@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018-2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -10,17 +11,28 @@
 
 #include "app/commands/params.h"
 #include "app/context_flags.h"
+#include "app/context_observer.h"
+#include "app/docs.h"
+#include "app/docs_observer.h"
 #include "base/disable_copying.h"
 #include "base/exception.h"
-#include "doc/context.h"
+#include "doc/frame.h"
+#include "obs/observable.h"
 #include "obs/signal.h"
 
+#include <memory>
 #include <vector>
 
+namespace doc {
+  class Layer;
+}
+
 namespace app {
+  class ActiveSiteHandler;
   class Command;
-  class Document;
-  class DocumentView;
+  class Doc;
+  class DocView;
+  class Transaction;
 
   class CommandPreconditionException : public base::Exception {
   public:
@@ -48,9 +60,14 @@ namespace app {
     bool m_canceled;
   };
 
-  class Context : public doc::Context {
+  class Context : public obs::observable<ContextObserver>,
+                  public DocsObserver {
   public:
     Context();
+    virtual ~Context();
+
+    const Docs& documents() const { return m_docs; }
+    Docs& documents() { return m_docs; }
 
     virtual bool isUIAvailable() const     { return false; }
     virtual bool isRecordingMacro() const  { return false; }
@@ -60,35 +77,52 @@ namespace app {
     bool checkFlags(uint32_t flags) const { return m_flags.check(flags); }
     void updateFlags() { m_flags.update(this); }
 
-    void sendDocumentToTop(doc::Document* document);
+    void sendDocumentToTop(Doc* doc);
+    void closeDocument(Doc* doc);
 
-    void setActiveDocument(doc::Document* document);
-    app::Document* activeDocument() const;
+    Site activeSite() const;
+    Doc* activeDocument() const;
+    void setActiveDocument(Doc* document);
+    void setActiveLayer(doc::Layer* layer);
+    void setActiveFrame(doc::frame_t frame);
     bool hasModifiedDocuments() const;
+    void notifyActiveSiteChanged();
 
     void executeCommand(const char* commandName);
     virtual void executeCommand(Command* command, const Params& params = Params());
 
-    virtual DocumentView* getFirstDocumentView(doc::Document* document) const {
+    virtual DocView* getFirstDocView(Doc* document) const {
       return nullptr;
     }
+
+    // Sets active/running transaction.
+    void setTransaction(Transaction* transaction);
+    Transaction* transaction() { return m_transaction; }
 
     obs::signal<void (CommandExecutionEvent&)> BeforeCommandExecution;
     obs::signal<void (CommandExecutionEvent&)> AfterCommandExecution;
 
   protected:
-    void onCreateDocument(doc::CreateDocumentArgs* args) override;
-    void onAddDocument(doc::Document* doc) override;
-    void onRemoveDocument(doc::Document* doc) override;
-    void onGetActiveSite(doc::Site* site) const override;
-    virtual void onSetActiveDocument(doc::Document* doc);
+    // DocsObserver impl
+    void onAddDocument(Doc* doc) override;
+    void onRemoveDocument(Doc* doc) override;
 
-    Document* lastSelectedDoc() { return m_lastSelectedDoc; }
+    virtual void onGetActiveSite(Site* site) const;
+    virtual void onSetActiveDocument(Doc* doc);
+    virtual void onSetActiveLayer(doc::Layer* layer);
+    virtual void onSetActiveFrame(const doc::frame_t frame);
+    virtual void onCloseDocument(Doc* doc);
+
+    Doc* lastSelectedDoc() { return m_lastSelectedDoc; }
 
   private:
-    // Last updated flags.
-    ContextFlags m_flags;
-    Document* m_lastSelectedDoc;
+    ActiveSiteHandler* activeSiteHandler() const;
+
+    Docs m_docs;
+    ContextFlags m_flags;       // Last updated flags.
+    Doc* m_lastSelectedDoc;
+    Transaction* m_transaction;
+    mutable std::unique_ptr<ActiveSiteHandler> m_activeSiteHandler;
 
     DISABLE_COPYING(Context);
   };

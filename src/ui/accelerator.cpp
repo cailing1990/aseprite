@@ -1,5 +1,5 @@
 // Aseprite UI Library
-// Copyright (C) 2001-2016  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This file is released under the terms of the MIT license.
 // Read LICENSE.txt for more information.
@@ -14,8 +14,7 @@
 #include "base/replace_string.h"
 #include "base/split_string.h"
 #include "base/string.h"
-#include "base/unique_ptr.h"
-#include "she/system.h"
+#include "os/system.h"
 
 #include <cctype>
 #include <cstdlib>
@@ -34,7 +33,7 @@ namespace ui {
 
 namespace {
 
-const char* scancode_to_string[] = { // Same order that she::KeyScancode
+const char* scancode_to_string[] = { // Same order that os::KeyScancode
   nullptr,
   "A",
   "B",
@@ -335,7 +334,7 @@ bool Accelerator::isPressed(KeyModifiers modifiers, KeyScancode scancode, int un
 
 bool Accelerator::isPressed() const
 {
-  she::System* sys = she::instance();
+  os::System* sys = os::instance();
   if (!sys)
     return false;
 
@@ -359,7 +358,7 @@ bool Accelerator::isPressed() const
 
 bool Accelerator::isLooselyPressed() const
 {
-  she::System* sys = she::instance();
+  os::System* sys = os::instance();
   if (!sys)
     return false;
 

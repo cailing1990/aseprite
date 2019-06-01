@@ -1,5 +1,6 @@
 // Aseprite Document Library
-// Copyright (c) 2001-2017 David Capello
+// Copyright (C) 2019  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This file is released under the terms of the MIT license.
 // Read LICENSE.txt for more information.
@@ -8,7 +9,6 @@
 #define DOC_BRUSH_H_INCLUDED
 #pragma once
 
-#include "base/unique_ptr.h"
 #include "doc/brush_pattern.h"
 #include "doc/brush_type.h"
 #include "doc/color.h"
@@ -16,6 +16,7 @@
 #include "gfx/point.h"
 #include "gfx/rect.h"
 
+#include <memory>
 #include <vector>
 
 namespace doc {
@@ -57,6 +58,7 @@ namespace doc {
     void setPatternOrigin(const gfx::Point& patternOrigin) {
       m_patternOrigin = patternOrigin;
     }
+    void setCenter(const gfx::Point& center);
 
   private:
     void clean();
@@ -76,8 +78,8 @@ namespace doc {
 
     // Extra data used for setImageColor()
     ImageRef m_backupImage; // Backup image to avoid losing original brush colors/pattern
-    base::UniquePtr<color_t> m_mainColor; // Main image brush color (nullptr if it wasn't specified)
-    base::UniquePtr<color_t> m_bgColor;   // Background color (nullptr if it wasn't specified)
+    std::unique_ptr<color_t> m_mainColor; // Main image brush color (nullptr if it wasn't specified)
+    std::unique_ptr<color_t> m_bgColor;   // Background color (nullptr if it wasn't specified)
   };
 
   typedef base::SharedPtr<Brush> BrushRef;

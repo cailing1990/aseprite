@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -33,10 +34,10 @@
 #include "gfx/point.h"
 #include "gfx/rect.h"
 #include "gfx/size.h"
-#include "she/draw_text.h"
-#include "she/font.h"
-#include "she/surface.h"
-#include "she/system.h"
+#include "os/draw_text.h"
+#include "os/font.h"
+#include "os/surface.h"
+#include "os/system.h"
 #include "ui/intern.h"
 #include "ui/ui.h"
 
@@ -108,12 +109,12 @@ static FontData* load_font(std::map<std::string, FontData*>& fonts,
 
   std::string type(typeStr);
   std::string xmlDir(base::get_file_path(xmlFilename));
-  base::UniquePtr<FontData> font(nullptr);
+  std::unique_ptr<FontData> font(nullptr);
 
   if (type == "spritesheet") {
     const char* fileStr = xmlFont->Attribute("file");
     if (fileStr) {
-      font.reset(new FontData(she::FontType::kSpriteSheet));
+      font.reset(new FontData(os::FontType::kSpriteSheet));
       font->setFilename(base::join_path(xmlDir, fileStr));
     }
   }
@@ -143,7 +144,7 @@ static FontData* load_font(std::map<std::string, FontData*>& fonts,
     // The filename can be empty if the font was not found, anyway we
     // want to keep the font information (e.g. to use the fallback
     // information of this font).
-    font.reset(new FontData(she::FontType::kTrueType));
+    font.reset(new FontData(os::FontType::kTrueType));
     font->setFilename(fontFilename);
     font->setAntialias(antialias);
 
@@ -282,9 +283,9 @@ void SkinTheme::loadSheet()
 {
   // Load the skin sheet
   std::string sheet_filename(base::join_path(m_path, "sheet.png"));
-  she::Surface* newSheet = nullptr;
+  os::Surface* newSheet = nullptr;
   try {
-    newSheet = she::instance()->loadRgbaSurface(sheet_filename.c_str());
+    newSheet = os::instance()->loadRgbaSurface(sheet_filename.c_str());
   }
   catch (...) {
     // Ignore the error, newSheet is nullptr and we will throw our own
@@ -303,7 +304,7 @@ void SkinTheme::loadSheet()
     m_sheet->applyScale(guiscale());
 
   // Reset sprite sheet and font of all layer styles (to avoid
-  // dangling pointers to she::Surface or she::Font).
+  // dangling pointers to os::Surface or os::Font).
   for (auto& it : m_styles) {
     for (auto& layer : it.second->layers()) {
       layer.setIcon(nullptr);
@@ -357,7 +358,7 @@ void SkinTheme::loadXml()
         if (sizeStr)
           size = std::strtol(sizeStr, nullptr, 10);
 
-        she::Font* font = fontData->getFont(size);
+        os::Font* font = fontData->getFont(size);
         m_themeFonts[idStr] = font;
 
         if (id == "default")
@@ -474,7 +475,7 @@ void SkinTheme::loadXml()
         }
 
         // TODO share the Surface with the SkinPart
-        she::Surface* slice = sliceSheet(nullptr, gfx::Rect(x, y, w, h));
+        os::Surface* slice = sliceSheet(nullptr, gfx::Rect(x, y, w, h));
         Cursor* cursor =
           new Cursor(slice, gfx::Point(focusx, focusy));
         m_cursors[cursorName] = cursor;
@@ -571,7 +572,7 @@ void SkinTheme::loadXml()
       {
         const char* fontId = xmlStyle->Attribute("font");
         if (fontId) {
-          she::Font* font = m_themeFonts[fontId];
+          os::Font* font = m_themeFonts[fontId];
           style->setFont(font);
         }
       }
@@ -700,7 +701,7 @@ void SkinTheme::loadXml()
   ThemeFile<SkinTheme>::updateInternals();
 }
 
-she::Surface* SkinTheme::sliceSheet(she::Surface* sur, const gfx::Rect& bounds)
+os::Surface* SkinTheme::sliceSheet(os::Surface* sur, const gfx::Rect& bounds)
 {
   if (sur && (sur->width() != bounds.w ||
               sur->height() != bounds.h)) {
@@ -710,10 +711,10 @@ she::Surface* SkinTheme::sliceSheet(she::Surface* sur, const gfx::Rect& bounds)
 
   if (!bounds.isEmpty()) {
     if (!sur)
-      sur = she::instance()->createRgbaSurface(bounds.w, bounds.h);
+      sur = os::instance()->createRgbaSurface(bounds.w, bounds.h);
 
-    she::SurfaceLock lockSrc(m_sheet);
-    she::SurfaceLock lockDst(sur);
+    os::SurfaceLock lockSrc(m_sheet);
+    os::SurfaceLock lockDst(sur);
     m_sheet->blitTo(sur, bounds.x, bounds.y, 0, 0, bounds.w, bounds.h);
   }
   else {
@@ -723,7 +724,7 @@ she::Surface* SkinTheme::sliceSheet(she::Surface* sur, const gfx::Rect& bounds)
   return sur;
 }
 
-she::Font* SkinTheme::getWidgetFont(const Widget* widget) const
+os::Font* SkinTheme::getWidgetFont(const Widget* widget) const
 {
   SkinPropertyPtr skinPropery = widget->getProperty(SkinProperty::Name);
   if (skinPropery && skinPropery->hasMiniFont())
@@ -934,7 +935,7 @@ int SkinTheme::getScrollbarSize()
 
 gfx::Size SkinTheme::getEntryCaretSize(Widget* widget)
 {
-  if (widget->font()->type() == she::FontType::kTrueType)
+  if (widget->font()->type() == os::FontType::kTrueType)
     return gfx::Size(2*guiscale(), widget->textHeight());
   else
     return gfx::Size(2*guiscale(), widget->textHeight()+2*guiscale());
@@ -964,7 +965,7 @@ void SkinTheme::paintEntry(PaintEvent& ev)
 
 namespace {
 
-class DrawEntryTextDelegate : public she::DrawTextDelegate {
+class DrawEntryTextDelegate : public os::DrawTextDelegate {
 public:
   DrawEntryTextDelegate(Entry* widget, Graphics* graphics,
                         const gfx::Point& pos, const int h)
@@ -1165,7 +1166,7 @@ void SkinTheme::paintMenuItem(ui::PaintEvent& ev)
 
   // Draw an indicator for selected items
   if (widget->isSelected()) {
-    she::Surface* icon =
+    os::Surface* icon =
       (widget->isEnabled() ?
        parts.checkSelected()->bitmap(0):
        parts.checkDisabled()->bitmap(0));
@@ -1270,7 +1271,7 @@ void SkinTheme::paintSlider(PaintEvent& ev)
   // Draw customized background
   if (bgPainter) {
     SkinPartPtr nw = parts.miniSliderEmpty();
-    she::Surface* thumb =
+    os::Surface* thumb =
       (widget->hasFocus() ? parts.miniSliderThumbFocused()->bitmap(0):
                             parts.miniSliderThumb()->bitmap(0));
 
@@ -1487,7 +1488,7 @@ SkinPartPtr SkinTheme::getToolPart(const char* toolId) const
   return getPartById(std::string("tool_") + toolId);
 }
 
-she::Surface* SkinTheme::getToolIcon(const char* toolId) const
+os::Surface* SkinTheme::getToolIcon(const char* toolId) const
 {
   SkinPartPtr part = getToolPart(toolId);
   if (part)
@@ -1497,9 +1498,9 @@ she::Surface* SkinTheme::getToolIcon(const char* toolId) const
 }
 
 void SkinTheme::drawRect(Graphics* g, const Rect& rc,
-                         she::Surface* nw, she::Surface* n, she::Surface* ne,
-                         she::Surface* e, she::Surface* se, she::Surface* s,
-                         she::Surface* sw, she::Surface* w)
+                         os::Surface* nw, os::Surface* n, os::Surface* ne,
+                         os::Surface* e, os::Surface* se, os::Surface* s,
+                         os::Surface* sw, os::Surface* w)
 {
   int x, y;
 
@@ -1623,7 +1624,11 @@ void SkinTheme::drawVline(ui::Graphics* g, const gfx::Rect& rc, SkinPart* part)
 
 void SkinTheme::paintProgressBar(ui::Graphics* g, const gfx::Rect& rc0, double progress)
 {
-  g->drawRect(colors.text(), rc0);
+  gfx::Color border = colors.text();
+  border = gfx::rgba(gfx::getr(border),
+                     gfx::getg(border),
+                     gfx::getb(border), 64);
+  g->drawRect(border, rc0);
 
   gfx::Rect rc = rc0;
   rc.shrink(1);

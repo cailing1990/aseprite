@@ -1,5 +1,6 @@
 // Aseprite
-// Copyright (C) 2001-2016  David Capello
+// Copyright (C) 2019 Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -8,7 +9,6 @@
 #include "config.h"
 #endif
 
-#include "base/unique_ptr.h"
 #include "doc/cel.h"
 #include "doc/frame.h"
 #include "doc/image.h"
@@ -16,6 +16,8 @@
 #include "doc/sprite.h"
 #include "gfx/rect.h"
 #include "render/render.h"
+
+#include <memory>
 
 namespace app {
 
@@ -25,10 +27,12 @@ static bool has_cels(const Layer* layer, frame_t frame);
 
 LayerImage* create_flatten_layer_copy(Sprite* dstSprite, const Layer* srcLayer,
                                       const gfx::Rect& bounds,
-                                      frame_t frmin, frame_t frmax)
+                                      frame_t frmin, frame_t frmax,
+                                      const bool newBlend)
 {
-  base::UniquePtr<LayerImage> flatLayer(new LayerImage(dstSprite));
+  std::unique_ptr<LayerImage> flatLayer(new LayerImage(dstSprite));
   render::Render render;
+  render.setNewBlend(newBlend);
 
   for (frame_t frame=frmin; frame<=frmax; ++frame) {
     // Does this frame have cels to render?
@@ -37,15 +41,15 @@ LayerImage* create_flatten_layer_copy(Sprite* dstSprite, const Layer* srcLayer,
       ImageRef image(Image::create(flatLayer->sprite()->pixelFormat(), bounds.w, bounds.h));
 
       // Create the new cel for the output layer.
-      base::UniquePtr<Cel> cel(new Cel(frame, image));
+      std::unique_ptr<Cel> cel(new Cel(frame, image));
       cel->setPosition(bounds.x, bounds.y);
 
       // Render this frame.
       render.renderLayer(image.get(), srcLayer, frame,
         gfx::Clip(0, 0, bounds));
 
-      // Add the cel (and release the base::UniquePtr).
-      flatLayer->addCel(cel);
+      // Add the cel (and release the std::unique_ptr).
+      flatLayer->addCel(cel.get());
       cel.release();
     }
   }

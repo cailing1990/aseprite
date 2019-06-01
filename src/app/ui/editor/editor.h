@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018-2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -9,7 +10,8 @@
 #pragma once
 
 #include "app/color.h"
-#include "app/document.h"
+#include "app/doc.h"
+#include "app/doc_observer.h"
 #include "app/pref/preferences.h"
 #include "app/tools/active_tool_observer.h"
 #include "app/tools/tool_loop_modifiers.h"
@@ -20,12 +22,13 @@
 #include "app/ui/editor/editor_state.h"
 #include "app/ui/editor/editor_states_history.h"
 #include "doc/algorithm/flip_type.h"
-#include "doc/document_observer.h"
 #include "doc/frame.h"
 #include "doc/image_buffer.h"
+#include "doc/selected_objects.h"
 #include "filters/tiled_mode.h"
 #include "gfx/fwd.h"
 #include "obs/connection.h"
+#include "os/color_space.h"
 #include "render/projection.h"
 #include "render/zoom.h"
 #include "ui/base.h"
@@ -34,9 +37,10 @@
 #include "ui/timer.h"
 #include "ui/widget.h"
 
+#include <set>
+
 namespace doc {
   class Layer;
-  class Site;
   class Sprite;
 }
 namespace gfx {
@@ -50,10 +54,11 @@ namespace ui {
 
 namespace app {
   class Context;
-  class DocumentView;
+  class DocView;
   class EditorCustomizationDelegate;
   class EditorRender;
   class PixelsMovement;
+  class Site;
 
   namespace tools {
     class Ink;
@@ -65,10 +70,10 @@ namespace app {
     ScrollDir,
   };
 
-  class Editor : public ui::Widget
-               , public doc::DocumentObserver
-               , public IColorSource
-               , public tools::ActiveToolObserver {
+  class Editor : public ui::Widget,
+                 public app::DocObserver,
+                 public IColorSource,
+                 public tools::ActiveToolObserver {
   public:
     enum EditorFlags {
       kNoneFlag = 0,
@@ -95,15 +100,15 @@ namespace app {
       MOUSE,                    // Zoom from cursor
     };
 
-    Editor(Document* document, EditorFlags flags = kDefaultEditorFlags);
+    Editor(Doc* document, EditorFlags flags = kDefaultEditorFlags);
     ~Editor();
 
     static void destroyEditorSharedInternals();
 
     bool isActive() const;
 
-    DocumentView* getDocumentView() { return m_docView; }
-    void setDocumentView(DocumentView* docView) { m_docView = docView; }
+    DocView* getDocView() { return m_docView; }
+    void setDocView(DocView* docView) { m_docView = docView; }
 
     // Returns the current state.
     EditorStatePtr getState() { return m_state; }
@@ -126,7 +131,11 @@ namespace app {
     EditorFlags editorFlags() const { return m_flags; }
     void setEditorFlags(EditorFlags flags) { m_flags = flags; }
 
-    Document* document() { return m_document; }
+    bool isExtraCelLocked() const {
+      return m_flashing != Flashing::None;
+    }
+
+    Doc* document() { return m_document; }
     Sprite* sprite() { return m_sprite; }
     Layer* layer() { return m_layer; }
     frame_t frame() { return m_frame; }
@@ -192,11 +201,11 @@ namespace app {
     // Control scroll when cursor goes out of the editor viewport.
     gfx::Point autoScroll(ui::MouseMessage* msg, AutoScroll dir);
 
-    tools::Tool* getCurrentEditorTool();
-    tools::Ink* getCurrentEditorInk();
+    tools::Tool* getCurrentEditorTool() const;
+    tools::Ink* getCurrentEditorInk() const;
 
     tools::ToolLoopModifiers getToolLoopModifiers() const { return m_toolLoopModifiers; }
-    bool isAutoSelectLayer() const;
+    bool isAutoSelectLayer();
 
     // Returns true if we are able to draw in the current doc/sprite/layer/cel.
     bool canDraw();
@@ -219,7 +228,7 @@ namespace app {
     void pasteImage(const Image* image, const Mask* mask = nullptr);
 
     void startSelectionTransformation(const gfx::Point& move, double angle);
-    
+
     void startFlipTransformation(doc::algorithm::FlipType flipType);
 
     // Used by EditorView to notify changes in the view's scroll
@@ -257,7 +266,7 @@ namespace app {
     // Gets the brush preview controller.
     BrushPreview& brushPreview() { return m_brushPreview; }
 
-    EditorRender& renderEngine() { return *m_renderEngine; }
+    static EditorRender& renderEngine() { return *m_renderEngine; }
 
     // IColorSource
     app::Color getColorByPosition(const gfx::Point& pos) override;
@@ -268,6 +277,18 @@ namespace app {
     // Returns true if the Shift key to draw straight lines with a
     // freehand tool is pressed.
     bool startStraightLineWithFreehandTool(const ui::MouseMessage* msg);
+
+    // Functions to handle the set of selected slices.
+    bool isSliceSelected(const doc::Slice* slice) const;
+    void clearSlicesSelection();
+    void selectSlice(const doc::Slice* slice);
+    bool selectSliceBox(const gfx::Rect& box);
+    void selectAllSlices();
+    bool hasSelectedSlices() const { return !m_selectedSlices.empty(); }
+
+    // Called by DocView's InputChainElement::onCancel() impl when Esc
+    // key is pressed to cancel the active selection.
+    void cancelSelections();
 
     static void registerCommands();
 
@@ -283,18 +304,22 @@ namespace app {
     void onTiledModeChange();
     void onShowExtrasChange();
 
-    // DocumentObserver impl
-    void onExposeSpritePixels(doc::DocumentEvent& ev) override;
-    void onSpritePixelRatioChanged(doc::DocumentEvent& ev) override;
-    void onBeforeRemoveLayer(DocumentEvent& ev) override;
-    void onRemoveCel(DocumentEvent& ev) override;
-    void onAddFrameTag(DocumentEvent& ev) override;
-    void onRemoveFrameTag(DocumentEvent& ev) override;
+    // DocObserver impl
+    void onColorSpaceChanged(DocEvent& ev) override;
+    void onExposeSpritePixels(DocEvent& ev) override;
+    void onSpritePixelRatioChanged(DocEvent& ev) override;
+    void onBeforeRemoveLayer(DocEvent& ev) override;
+    void onRemoveCel(DocEvent& ev) override;
+    void onAddFrameTag(DocEvent& ev) override;
+    void onRemoveFrameTag(DocEvent& ev) override;
+    void onRemoveSlice(DocEvent& ev) override;
 
     // ActiveToolObserver impl
     void onActiveToolChange(tools::Tool* tool) override;
 
   private:
+    enum class Flashing { None, WithFlashExtraCel, WaitingDeferedPaint };
+
     void setStateInternal(const EditorStatePtr& newState);
     void updateQuicktool();
     void updateToolByTipProximity(ui::PointerType pointerType);
@@ -345,7 +370,7 @@ namespace app {
     // Current decorator (to draw extra UI elements).
     EditorDecorator* m_decorator;
 
-    Document* m_document;         // Active document in the editor
+    Doc* m_document;              // Active document in the editor
     Sprite* m_sprite;             // Active sprite in the editor
     Layer* m_layer;               // Active layer in the editor
     frame_t m_frame;              // Active frame in the editor
@@ -384,13 +409,14 @@ namespace app {
     // TODO This field shouldn't be here. It should be removed when
     // editors.cpp are finally replaced with a fully funtional Workspace
     // widget.
-    DocumentView* m_docView;
+    DocView* m_docView;
 
     gfx::Point m_oldPos;
 
     EditorFlags m_flags;
 
     bool m_secondaryButton;
+    Flashing m_flashing;
 
     // Animation speed multiplier.
     double m_aniSpeed;
@@ -411,6 +437,9 @@ namespace app {
 #if ENABLE_DEVMODE
     gfx::Rect m_perfInfoBounds;
 #endif
+
+    // For slices
+    doc::SelectedObjects m_selectedSlices;
 
     // The render engine must be shared between all editors so when a
     // DrawingState is being used in one editor, other editors for the

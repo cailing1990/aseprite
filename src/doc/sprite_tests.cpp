@@ -1,4 +1,5 @@
 // Aseprite Document Library
+// Copyright (c) 2018-2019 Igara Studio S.A.
 // Copyright (c) 2001-2016 David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -20,7 +21,7 @@ using namespace doc;
 
 TEST(Sprite, Layers)
 {
-  Sprite* spr = new Sprite(IMAGE_RGB, 32, 32, 256);
+  Sprite* spr = new Sprite(ImageSpec(ColorMode::RGB, 32, 32), 256);
 
   LayerImage* lay1 = new LayerImage(spr);
   LayerImage* lay2 = new LayerImage(spr);
@@ -89,7 +90,7 @@ TEST(Sprite, Layers)
 //   - lay3:  F G~H
 TEST(Sprite, CelsRange)
 {
-  Sprite* spr = new Sprite(IMAGE_RGB, 32, 32, 256);
+  Sprite* spr = new Sprite(ImageSpec(ColorMode::RGB, 32, 32), 256);
   spr->setTotalFrames(3);
 
   LayerImage* lay1 = new LayerImage(spr);
@@ -103,17 +104,14 @@ TEST(Sprite, CelsRange)
 
   ImageRef imgA(Image::create(IMAGE_RGB, 32, 32));
   Cel* celA = new Cel(frame_t(0), imgA);
-  Cel* celB = Cel::createLink(celA);
-  celB->setFrame(frame_t(2));
+  Cel* celB = Cel::MakeLink(frame_t(2), celA);
   lay1->addCel(celA);
   lay1->addCel(celB);
 
   ImageRef imgC(Image::create(IMAGE_RGB, 32, 32));
   Cel* celC = new Cel(frame_t(0), imgC);
-  Cel* celD = Cel::createCopy(celC);
-  Cel* celE = Cel::createLink(celD);
-  celD->setFrame(frame_t(1));
-  celE->setFrame(frame_t(2));
+  Cel* celD = Cel::MakeCopy(frame_t(1), celC);
+  Cel* celE = Cel::MakeLink(frame_t(2), celD);
   lay2->addCel(celC);
   lay2->addCel(celD);
   lay2->addCel(celE);
@@ -122,8 +120,7 @@ TEST(Sprite, CelsRange)
   ImageRef imgG(Image::create(IMAGE_RGB, 32, 32));
   Cel* celF = new Cel(frame_t(0), imgF);
   Cel* celG = new Cel(frame_t(1), imgG);
-  Cel* celH = Cel::createLink(celG);
-  celH->setFrame(frame_t(2));
+  Cel* celH = Cel::MakeLink(frame_t(2), celG);
   lay3->addCel(celF);
   lay3->addCel(celG);
   lay3->addCel(celH);

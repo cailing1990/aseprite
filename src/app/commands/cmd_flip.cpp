@@ -1,5 +1,6 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2019  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -18,13 +19,13 @@
 #include "app/cmd/trim_cel.h"
 #include "app/commands/params.h"
 #include "app/context_access.h"
-#include "app/document_api.h"
-#include "app/document_range.h"
+#include "app/doc_api.h"
+#include "app/doc_range.h"
 #include "app/i18n/strings.h"
 #include "app/modules/editors.h"
 #include "app/modules/gui.h"
 #include "app/tools/tool_box.h"
-#include "app/transaction.h"
+#include "app/tx.h"
 #include "app/ui/editor/editor.h"
 #include "app/ui/editor/moving_pixels_state.h"
 #include "app/ui/status_bar.h"
@@ -84,7 +85,7 @@ void FlipCommand::onExecute(Context* context)
               site.layer()->isEditable()) {
       // If we want to flip the visible mask for the current cel,
       // we can go to MovingPixelsState.
-      if (static_cast<app::Document*>(site.document())->isMaskVisible()) {
+      if (site.document()->isMaskVisible()) {
         // Select marquee tool
         if (tools::Tool* tool = App::instance()->toolBox()
             ->getToolById(tools::WellKnownTools::RectangularMarquee)) {
@@ -107,13 +108,13 @@ void FlipCommand::onExecute(Context* context)
     for (Cel* cel : site.sprite()->uniqueCels())
       cels.push_back(cel);
   }
-  
+
   ContextWriter writer(context);
-  Document* document = writer.document();
+  Doc* document = writer.document();
   Sprite* sprite = writer.sprite();
-  Transaction transaction(writer.context(), friendlyName());
-  DocumentApi api = document->getApi(transaction);
-  
+  Tx tx(writer.context(), friendlyName());
+  DocApi api = document->getApi(tx);
+
   Mask* mask = document->mask();
   if (m_flipMask && document->isMaskVisible()) {
     Site site = *writer.site();
@@ -141,12 +142,12 @@ void FlipCommand::onExecute(Context* context)
           continue;
 
         if (mask->bitmap() && !mask->isRectangular())
-          transaction.execute(new cmd::FlipMaskedCel(cel, m_flipType));
+          tx(new cmd::FlipMaskedCel(cel, m_flipType));
         else
           api.flipImage(image, flipBounds, m_flipType);
 
         if (cel->layer()->isTransparent())
-          transaction.execute(new cmd::TrimCel(cel));
+          tx(new cmd::TrimCel(cel));
       }
       // When the mask is bigger than the cel bounds, we have to
       // expand the cel, make the flip, and shrink it again.
@@ -157,7 +158,7 @@ void FlipCommand::onExecute(Context* context)
 
         ExpandCelCanvas expand(
           site, cel->layer(),
-          TiledMode::NONE, transaction,
+          TiledMode::NONE, tx,
           ExpandCelCanvas::None);
 
         expand.validateDestCanvas(gfx::Region(flipBounds));
@@ -188,7 +189,7 @@ void FlipCommand::onExecute(Context* context)
         if (m_flipType == doc::algorithm::FlipVertical)
           bounds.y = sprite->height() - bounds.h - bounds.y;
 
-        transaction.execute(new cmd::SetCelBoundsF(cel, bounds));
+        tx(new cmd::SetCelBoundsF(cel, bounds));
       }
       else {
         api.setCelPosition
@@ -208,11 +209,11 @@ void FlipCommand::onExecute(Context* context)
   // Flip the mask.
   Image* maskBitmap = mask->bitmap();
   if (maskBitmap) {
-    transaction.execute(new cmd::FlipMask(document, m_flipType));
+    tx(new cmd::FlipMask(document, m_flipType));
 
     // Flip the mask position because the
     if (!m_flipMask)
-      transaction.execute(
+      tx(
         new cmd::SetMaskPosition(
           document,
           gfx::Point(
@@ -222,11 +223,9 @@ void FlipCommand::onExecute(Context* context)
             (m_flipType == doc::algorithm::FlipVertical ?
               sprite->height() - mask->bounds().y2():
               mask->bounds().y))));
-
-    document->generateMaskBoundaries();
   }
 
-  transaction.commit();
+  tx.commit();
   update_screen_for_document(document);
 }
 

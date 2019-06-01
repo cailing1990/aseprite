@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018-2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -8,15 +9,16 @@
 #define APP_UI_TIMELINE_TIMELINE_H_INCLUDED
 #pragma once
 
-#include "app/document_range.h"
+#include "app/doc_observer.h"
+#include "app/docs_observer.h"
+#include "app/doc_range.h"
 #include "app/loop_tag.h"
 #include "app/pref/preferences.h"
 #include "app/ui/editor/editor_observer.h"
 #include "app/ui/input_chain_element.h"
 #include "app/ui/timeline/ani_controls.h"
-#include "doc/document_observer.h"
-#include "doc/documents_observer.h"
 #include "doc/frame.h"
+#include "doc/layer.h"
 #include "doc/selected_frames.h"
 #include "doc/selected_layers.h"
 #include "doc/sprite.h"
@@ -36,6 +38,7 @@ namespace doc {
 
 namespace ui {
   class Graphics;
+  class TooltipManager;
 }
 
 namespace app {
@@ -49,19 +52,19 @@ namespace app {
   class CommandExecutionEvent;
   class ConfigureTimelinePopup;
   class Context;
-  class Document;
+  class Doc;
   class Editor;
 
-  class Timeline : public ui::Widget
-                 , public ui::ScrollableViewDelegate
-                 , public doc::ContextObserver
-                 , public doc::DocumentsObserver
-                 , public doc::DocumentObserver
-                 , public app::EditorObserver
-                 , public app::InputChainElement
-                 , public app::FrameTagProvider {
+  class Timeline : public ui::Widget,
+                   public ui::ScrollableViewDelegate,
+                   public ContextObserver,
+                   public DocsObserver,
+                   public DocObserver,
+                   public EditorObserver,
+                   public InputChainElement,
+                   public FrameTagProvider {
   public:
-    typedef DocumentRange Range;
+    typedef DocRange Range;
 
     enum State {
       STATE_STANDBY,
@@ -86,7 +89,7 @@ namespace app {
 
     enum DropOp { kMove, kCopy };
 
-    Timeline();
+    Timeline(ui::TooltipManager* tooltipManager);
     ~Timeline();
 
     void updateUsingEditor(Editor* editor);
@@ -135,25 +138,26 @@ namespace app {
     void onResize(ui::ResizeEvent& ev) override;
     void onPaint(ui::PaintEvent& ev) override;
 
-    // DocumentObserver impl.
-    void onGeneralUpdate(DocumentEvent& ev) override;
-    void onAddLayer(doc::DocumentEvent& ev) override;
-    void onAfterRemoveLayer(doc::DocumentEvent& ev) override;
-    void onAddFrame(doc::DocumentEvent& ev) override;
-    void onRemoveFrame(doc::DocumentEvent& ev) override;
-    void onSelectionChanged(doc::DocumentEvent& ev) override;
-    void onLayerNameChange(doc::DocumentEvent& ev) override;
-    void onAddFrameTag(DocumentEvent& ev) override;
-    void onRemoveFrameTag(DocumentEvent& ev) override;
+    // DocObserver impl.
+    void onGeneralUpdate(DocEvent& ev) override;
+    void onAddLayer(DocEvent& ev) override;
+    void onBeforeRemoveLayer(DocEvent& ev) override;
+    void onAfterRemoveLayer(DocEvent& ev) override;
+    void onAddFrame(DocEvent& ev) override;
+    void onRemoveFrame(DocEvent& ev) override;
+    void onSelectionBoundariesChanged(DocEvent& ev) override;
+    void onLayerNameChange(DocEvent& ev) override;
+    void onAddFrameTag(DocEvent& ev) override;
+    void onRemoveFrameTag(DocEvent& ev) override;
 
     // app::Context slots.
     void onAfterCommandExecution(CommandExecutionEvent& ev);
 
     // ContextObserver impl
-    void onActiveSiteChange(const doc::Site& site) override;
+    void onActiveSiteChange(const Site& site) override;
 
-    // DocumentsObserver impl.
-    void onRemoveDocument(doc::Document* document) override;
+    // DocsObserver impl.
+    void onRemoveDocument(Doc* document) override;
 
     // EditorObserver impl.
     void onStateChanged(Editor* editor) override;
@@ -250,8 +254,8 @@ namespace app {
     bool allLayersDiscontinuous();
     void detachDocument();
     void setCursor(ui::Message* msg, const Hit& hit);
-    void getDrawableLayers(ui::Graphics* g, layer_t* firstLayer, layer_t* lastLayer);
-    void getDrawableFrames(ui::Graphics* g, frame_t* firstFrame, frame_t* lastFrame);
+    void getDrawableLayers(layer_t* firstLayer, layer_t* lastLayer);
+    void getDrawableFrames(frame_t* firstFrame, frame_t* lastFrame);
     void drawPart(ui::Graphics* g, const gfx::Rect& bounds,
                   const std::string* text,
                   ui::Style* style,
@@ -359,7 +363,7 @@ namespace app {
     double m_zoom;
     Context* m_context;
     Editor* m_editor;
-    Document* m_document;
+    Doc* m_document;
     Sprite* m_sprite;
     Layer* m_layer;
     frame_t m_frame;
@@ -404,8 +408,7 @@ namespace app {
 
     // Data used for thumbnails.
     bool m_thumbnailsOverlayVisible;
-    gfx::Rect m_thumbnailsOverlayInner;
-    gfx::Rect m_thumbnailsOverlayOuter;
+    gfx::Rect m_thumbnailsOverlayBounds;
     Hit m_thumbnailsOverlayHit;
     gfx::Point m_thumbnailsOverlayDirection;
     obs::connection m_thumbnailsPrefConn;

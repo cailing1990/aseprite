@@ -21,7 +21,6 @@ namespace app {
 class RepeatLastExportCommand : public Command {
 public:
   RepeatLastExportCommand();
-  Command* clone() const override { return new RepeatLastExportCommand(*this); }
 
 protected:
   virtual bool onEnabled(Context* context) override;
@@ -45,7 +44,7 @@ void RepeatLastExportCommand::onExecute(Context* context)
 
   {
     const ContextReader reader(context);
-    const Document* document(reader.document());
+    const Doc* document(reader.document());
     DocumentPreferences& docPref =
       Preferences::instance().document(document);
 

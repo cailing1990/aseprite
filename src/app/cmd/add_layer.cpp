@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2016  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -10,8 +10,8 @@
 
 #include "app/cmd/add_layer.h"
 
-#include "doc/document.h"
-#include "doc/document_event.h"
+#include "app/doc.h"
+#include "app/doc_event.h"
 #include "doc/layer.h"
 #include "doc/layer_io.h"
 #include "doc/subobjects_io.h"
@@ -69,26 +69,26 @@ void AddLayer::addLayer(Layer* group, Layer* newLayer, Layer* afterThis)
   group->incrementVersion();
   group->sprite()->incrementVersion();
 
-  Document* doc = group->sprite()->document();
-  DocumentEvent ev(doc);
+  Doc* doc = static_cast<Doc*>(group->sprite()->document());
+  DocEvent ev(doc);
   ev.sprite(group->sprite());
   ev.layer(newLayer);
-  doc->notify_observers<DocumentEvent&>(&DocumentObserver::onAddLayer, ev);
+  doc->notify_observers<DocEvent&>(&DocObserver::onAddLayer, ev);
 }
 
 void AddLayer::removeLayer(Layer* group, Layer* layer)
 {
-  Document* doc = group->sprite()->document();
-  DocumentEvent ev(doc);
+  Doc* doc = static_cast<Doc*>(group->sprite()->document());
+  DocEvent ev(doc);
   ev.sprite(layer->sprite());
   ev.layer(layer);
-  doc->notify_observers<DocumentEvent&>(&DocumentObserver::onBeforeRemoveLayer, ev);
+  doc->notify_observers<DocEvent&>(&DocObserver::onBeforeRemoveLayer, ev);
 
   static_cast<LayerGroup*>(group)->removeLayer(layer);
   group->incrementVersion();
   group->sprite()->incrementVersion();
 
-  doc->notify_observers<DocumentEvent&>(&DocumentObserver::onAfterRemoveLayer, ev);
+  doc->notify_observers<DocEvent&>(&DocObserver::onAfterRemoveLayer, ev);
 
   delete layer;
 }

@@ -1,5 +1,6 @@
 // Aseprite UI Library
-// Copyright (C) 2001-2016  David Capello
+// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This file is released under the terms of the MIT license.
 // Read LICENSE.txt for more information.
@@ -10,9 +11,10 @@
 
 #include "ui/manager.h"
 
-#include "she/display.h"
-#include "she/surface.h"
-#include "she/system.h"
+#include "os/display.h"
+#include "os/surface.h"
+#include "os/system.h"
+#include "ui/overlay_manager.h"
 
 #include <vector>
 
@@ -22,51 +24,74 @@ using namespace gfx;
 
 void move_region(Manager* manager, const Region& region, int dx, int dy)
 {
-  she::System* system = she::instance();
-  she::Display* display = Manager::getDefault()->getDisplay();
+  os::Display* display = manager->getDisplay();
   ASSERT(display);
   if (!display)
     return;
 
-  she::Surface* surface = display->getSurface();
-  she::SurfaceLock lock(surface);
-  std::size_t nrects = region.size();
+  auto overlays = ui::OverlayManager::instance();
+  gfx::Rect bounds = region.bounds();
+  bounds |= gfx::Rect(bounds).offset(dx, dy);
+  overlays->restoreOverlappedAreas(bounds);
 
-  // Blit directly screen to screen.
-  if (nrects == 1) {
-    gfx::Rect rc = region[0];
+  os::Surface* surface = display->getSurface();
+  os::SurfaceLock lock(surface);
+
+  // Fast path, move one rectangle.
+  if (region.isRect()) {
+    gfx::Rect rc = region.bounds();
     surface->scrollTo(rc, dx, dy);
 
     rc.offset(dx, dy);
-    Manager::getDefault()->dirtyRect(rc);
+    manager->dirtyRect(rc);
   }
-  // Blit saving areas and copy them.
-  else if (nrects > 1) {
-    std::vector<she::Surface*> images(nrects);
-    Region::const_iterator it, begin=region.begin(), end=region.end();
-    int c;
+  // As rectangles in the region internals are separated by bands
+  // through the y-axis, we can sort the rectangles by y-axis and then
+  // by x-axis to move rectangle by rectangle depending on the dx/dy
+  // direction so we don't overlap each rectangle.
+  else if (region.isComplex()) {
+    std::size_t nrects = region.size();
+    std::vector<gfx::Rect> rcs(nrects);
+    std::copy(region.begin(), region.end(), rcs.begin());
 
-    for (c=0, it=begin; it != end; ++it, ++c) {
-      const Rect& rc = *it;
-      she::Surface* tmpSur = system->createSurface(rc.w, rc.h);
-      {
-        she::SurfaceLock tmpSurLock(tmpSur);
-        surface->blitTo(tmpSur, rc.x, rc.y, 0, 0, rc.w, rc.h);
-      }
-      images[c] = tmpSur;
-    }
+    std::sort(
+      rcs.begin(), rcs.end(),
+      [dx, dy](const gfx::Rect& a, const gfx::Rect& b){
+        if (dy < 0) {
+          if (a.y < b.y)
+            return true;
+          else if (a.y == b.y) {
+            if (dx < 0)
+              return a.x < b.x;
+            else
+              return a.x > b.x;
+          }
+          else
+            return false;
+        }
+        else {
+          if (a.y > b.y)
+            return true;
+          else if (a.y == b.y) {
+            if (dx < 0)
+              return a.x < b.x;
+            else
+              return a.x > b.x;
+          }
+          else
+            return false;
+        }
+      });
 
-    for (c=0, it=begin; it != end; ++it, ++c) {
-      gfx::Rect rc((*it).x+dx, (*it).y+dy, (*it).w, (*it).h);
-      she::Surface* tmpSur = images[c];
-      {
-        she::SurfaceLock tmpSurLock(tmpSur);
-        tmpSur->blitTo(surface, 0, 0, rc.x, rc.y, rc.w, rc.h);
-        manager->dirtyRect(rc);
-      }
-      tmpSur->dispose();
+    for (gfx::Rect& rc : rcs) {
+      surface->scrollTo(rc, dx, dy);
+
+      rc.offset(dx, dy);
+      manager->dirtyRect(rc);
     }
   }
+
+  overlays->drawOverlays();
 }
 
 } // namespace ui

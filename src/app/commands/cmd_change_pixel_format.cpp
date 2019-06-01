@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -29,8 +30,10 @@
 #include "base/bind.h"
 #include "base/thread.h"
 #include "doc/image.h"
+#include "doc/layer.h"
 #include "doc/sprite.h"
 #include "fmt/format.h"
+#include "render/dithering.h"
 #include "render/dithering_algorithm.h"
 #include "render/ordered_dither.h"
 #include "render/quantization.h"
@@ -75,9 +78,9 @@ public:
                 const doc::Sprite* sprite,
                 const doc::frame_t frame,
                 const doc::PixelFormat pixelFormat,
-                const render::DitheringAlgorithm ditheringAlgorithm,
-                const render::DitheringMatrix& ditheringMatrix,
-                const gfx::Point& pos)
+                const render::Dithering& dithering,
+                const gfx::Point& pos,
+                const bool newBlend)
     : m_image(dstImage)
     , m_pos(pos)
     , m_running(true)
@@ -87,12 +90,12 @@ public:
       [this,
        sprite, frame,
        pixelFormat,
-       ditheringAlgorithm,
-       ditheringMatrix]() { // Copy the matrix
+       dithering,
+       newBlend]() { // Copy the matrix
         run(sprite, frame,
             pixelFormat,
-            ditheringAlgorithm,
-            ditheringMatrix);
+            dithering,
+            newBlend);
       })
   {
   }
@@ -114,14 +117,15 @@ private:
   void run(const Sprite* sprite,
            const doc::frame_t frame,
            const doc::PixelFormat pixelFormat,
-           const render::DitheringAlgorithm ditheringAlgorithm,
-           const render::DitheringMatrix& ditheringMatrix) {
+           const render::Dithering& dithering,
+           const bool newBlend) {
     doc::ImageRef tmp(
       Image::create(sprite->pixelFormat(),
                     m_image->width(),
                     m_image->height()));
 
     render::Render render;
+    render.setNewBlend(newBlend);
     render.renderSprite(
       tmp.get(), sprite, frame,
       gfx::Clip(0, 0,
@@ -133,8 +137,7 @@ private:
       tmp.get(),
       m_image.get(),
       pixelFormat,
-      ditheringAlgorithm,
-      ditheringMatrix,
+      dithering,
       sprite->rgbMap(frame),
       sprite->palette(frame),
       (sprite->backgroundLayer() != nullptr),
@@ -171,6 +174,7 @@ public:
     , m_imageBuffer(new doc::ImageBuffer)
     , m_selectedItem(nullptr)
     , m_ditheringSelector(nullptr)
+    , m_imageJustCreated(true)
   {
     doc::PixelFormat from = m_editor->sprite()->pixelFormat();
 
@@ -189,9 +193,23 @@ public:
 
       m_ditheringSelector = new DitheringSelector(DitheringSelector::SelectBoth);
       m_ditheringSelector->setExpansive(true);
+
+      // Select default dithering method
+      {
+        int index = m_ditheringSelector->findItemIndex(
+          Preferences::instance().quantization.ditheringAlgorithm());
+        if (index >= 0)
+          m_ditheringSelector->setSelectedItemIndex(index);
+      }
+
       m_ditheringSelector->Change.connect(
         base::Bind<void>(&ColorModeWindow::onDithering, this));
       ditheringPlaceholder()->addChild(m_ditheringSelector);
+
+      factor()->Change.connect(base::Bind<void>(&ColorModeWindow::onDithering, this));
+    }
+    else {
+      amount()->setVisible(false);
     }
     if (from != IMAGE_GRAYSCALE)
       colorMode()->addChild(new ConversionItem(IMAGE_GRAYSCALE));
@@ -204,6 +222,9 @@ public:
     m_timer.Tick.connect(base::Bind<void>(&ColorModeWindow::onMonitorProgress, this));
 
     progress()->setReadOnly(true);
+
+    // Default dithering factor
+    factor()->setValue(Preferences::instance().quantization.ditheringFactor());
 
     // Select first option
     colorMode()->selectIndex(0);
@@ -218,18 +239,34 @@ public:
     return m_selectedItem->pixelFormat();
   }
 
-  render::DitheringAlgorithm ditheringAlgorithm() const {
-    return (m_ditheringSelector ? m_ditheringSelector->ditheringAlgorithm():
-                                  render::DitheringAlgorithm::None);
-  }
-
-  render::DitheringMatrix ditheringMatrix() const {
-    return (m_ditheringSelector ? m_ditheringSelector->ditheringMatrix():
-                                  render::BayerMatrix(8));
+  render::Dithering dithering() const {
+    render::Dithering d;
+    if (m_ditheringSelector) {
+      d.algorithm(m_ditheringSelector->ditheringAlgorithm());
+      d.matrix(m_ditheringSelector->ditheringMatrix());
+    }
+    d.factor(double(factor()->getValue()) / 100.0);
+    return d;
   }
 
   bool flattenEnabled() const {
     return flatten()->isSelected();
+  }
+
+  // Save the dithering method used for the future
+  void saveDitheringOptions() {
+    if (m_ditheringSelector) {
+      if (auto item = m_ditheringSelector->getSelectedItem()) {
+        Preferences::instance().quantization.ditheringAlgorithm(
+          item->text());
+
+        if (m_ditheringSelector->ditheringAlgorithm() ==
+            render::DitheringAlgorithm::ErrorDiffusion) {
+          Preferences::instance().quantization.ditheringFactor(
+            factor()->getValue());
+        }
+      }
+    }
   }
 
 private:
@@ -260,14 +297,25 @@ private:
 
     doc::PixelFormat dstPixelFormat = item->pixelFormat();
 
-    if (m_ditheringSelector)
-      m_ditheringSelector->setVisible(dstPixelFormat == doc::IMAGE_INDEXED);
+    if (m_ditheringSelector) {
+      const bool toIndexed = (dstPixelFormat == doc::IMAGE_INDEXED);
+      m_ditheringSelector->setVisible(toIndexed);
+
+      const bool errorDiff =
+        (m_ditheringSelector->ditheringAlgorithm() ==
+         render::DitheringAlgorithm::ErrorDiffusion);
+      amount()->setVisible(toIndexed && errorDiff);
+    }
 
     m_image.reset(
       Image::create(dstPixelFormat,
                     visibleBounds.w,
                     visibleBounds.h,
                     m_imageBuffer));
+    if (m_imageJustCreated) {
+      m_imageJustCreated = false;
+      m_image->clear(0);
+    }
 
     m_editor->renderEngine().setPreviewImage(
       nullptr,
@@ -276,10 +324,9 @@ private:
       visibleBounds.origin(),
       doc::BlendMode::SRC);
 
-    m_image->clear(0);
     m_editor->invalidate();
     progress()->setValue(0);
-    progress()->setVisible(true);
+    progress()->setVisible(false);
     layout();
 
     m_bgThread.reset(
@@ -288,9 +335,9 @@ private:
         m_editor->sprite(),
         m_editor->frame(),
         dstPixelFormat,
-        ditheringAlgorithm(),
-        ditheringMatrix(),
-        visibleBounds.origin()));
+        dithering(),
+        visibleBounds.origin(),
+        Preferences::instance().experimental.newBlend()));
 
     m_timer.start();
   }
@@ -314,8 +361,16 @@ private:
       progress()->setVisible(false);
       layout();
     }
-    else
-      progress()->setValue(100 * m_bgThread->progress());
+    else {
+      int v = int(100 * m_bgThread->progress());
+      if (v > 0) {
+        progress()->setValue(v);
+        if (!progress()->isVisible()) {
+          progress()->setVisible(true);
+          layout();
+        }
+      }
+    }
 
     m_editor->invalidate();
   }
@@ -324,9 +379,10 @@ private:
   Editor* m_editor;
   doc::ImageRef m_image;
   doc::ImageBufferPtr m_imageBuffer;
-  base::UniquePtr<ConvertThread> m_bgThread;
+  std::unique_ptr<ConvertThread> m_bgThread;
   ConversionItem* m_selectedItem;
   DitheringSelector* m_ditheringSelector;
+  bool m_imageJustCreated;
 };
 
 } // anonymous namespace
@@ -334,7 +390,6 @@ private:
 class ChangePixelFormatCommand : public Command {
 public:
   ChangePixelFormatCommand();
-  Command* clone() const override { return new ChangePixelFormatCommand(*this); }
 
 protected:
   void onLoadParams(const Params& params) override;
@@ -346,8 +401,7 @@ protected:
 private:
   bool m_useUI;
   doc::PixelFormat m_format;
-  render::DitheringAlgorithm m_ditheringAlgorithm;
-  render::DitheringMatrix m_ditheringMatrix;
+  render::Dithering m_dithering;
 };
 
 ChangePixelFormatCommand::ChangePixelFormatCommand()
@@ -355,7 +409,7 @@ ChangePixelFormatCommand::ChangePixelFormatCommand()
 {
   m_useUI = true;
   m_format = IMAGE_RGB;
-  m_ditheringAlgorithm = render::DitheringAlgorithm::None;
+  m_dithering = render::Dithering();
 }
 
 void ChangePixelFormatCommand::onLoadParams(const Params& params)
@@ -371,11 +425,13 @@ void ChangePixelFormatCommand::onLoadParams(const Params& params)
 
   std::string dithering = params.get("dithering");
   if (dithering == "ordered")
-    m_ditheringAlgorithm = render::DitheringAlgorithm::Ordered;
+    m_dithering.algorithm(render::DitheringAlgorithm::Ordered);
   else if (dithering == "old")
-    m_ditheringAlgorithm = render::DitheringAlgorithm::Old;
+    m_dithering.algorithm(render::DitheringAlgorithm::Old);
+  else if (dithering == "error-diffusion")
+    m_dithering.algorithm(render::DitheringAlgorithm::ErrorDiffusion);
   else
-    m_ditheringAlgorithm = render::DitheringAlgorithm::None;
+    m_dithering.algorithm(render::DitheringAlgorithm::None);
 
   std::string matrix = params.get("dithering-matrix");
   if (!matrix.empty()) {
@@ -383,17 +439,20 @@ void ChangePixelFormatCommand::onLoadParams(const Params& params)
     const render::DitheringMatrix* knownMatrix =
       App::instance()->extensions().ditheringMatrix(matrix);
     if (knownMatrix) {
-      m_ditheringMatrix = *knownMatrix;
+      m_dithering.matrix(*knownMatrix);
     }
     // Then, if the matrix doesn't exist we try to load it from a file
-    else if (!load_dithering_matrix_from_sprite(matrix, m_ditheringMatrix)) {
-      throw std::runtime_error("Invalid matrix name");
+    else {
+      render::DitheringMatrix ditMatrix;
+      if (!load_dithering_matrix_from_sprite(matrix, ditMatrix))
+        throw std::runtime_error("Invalid matrix name");
+      m_dithering.matrix(ditMatrix);
     }
   }
   // Default dithering matrix is BayerMatrix(8)
   else {
     // TODO object slicing here (from BayerMatrix -> DitheringMatrix)
-    m_ditheringMatrix = render::BayerMatrix(8);
+    m_dithering.matrix(render::BayerMatrix(8));
   }
 }
 
@@ -410,7 +469,7 @@ bool ChangePixelFormatCommand::onEnabled(Context* context)
 
   if (sprite->pixelFormat() == IMAGE_INDEXED &&
       m_format == IMAGE_INDEXED &&
-      m_ditheringAlgorithm != render::DitheringAlgorithm::None)
+      m_dithering.algorithm() != render::DitheringAlgorithm::None)
     return false;
 
   return true;
@@ -427,7 +486,7 @@ bool ChangePixelFormatCommand::onChecked(Context* context)
   if (sprite &&
       sprite->pixelFormat() == IMAGE_INDEXED &&
       m_format == IMAGE_INDEXED &&
-      m_ditheringAlgorithm != render::DitheringAlgorithm::None)
+      m_dithering.algorithm() != render::DitheringAlgorithm::None)
     return false;
 
   return
@@ -454,9 +513,10 @@ void ChangePixelFormatCommand::onExecute(Context* context)
       return;
 
     m_format = window.pixelFormat();
-    m_ditheringAlgorithm = window.ditheringAlgorithm();
-    m_ditheringMatrix = window.ditheringMatrix();
+    m_dithering = window.dithering();
     flatten = window.flattenEnabled();
+
+    window.saveDitheringOptions();
   }
 #endif // ENABLE_UI
 
@@ -467,18 +527,29 @@ void ChangePixelFormatCommand::onExecute(Context* context)
   {
     const ContextReader reader(context);
     SpriteJob job(reader, "Color Mode Change");
+    Sprite* sprite(job.sprite());
+
+    // TODO this was moved in the main UI thread because
+    //      cmd::FlattenLayers() generates a EditorObserver::onAfterLayerChanged()
+    //      event, and that event is an UI event.
+    //      We should refactor the whole app to separate doc changes <-> UI changes,
+    //      but that is for the future:
+    //      https://github.com/aseprite/aseprite/issues/509
+    //      https://github.com/aseprite/aseprite/issues/378
+    if (flatten) {
+      const bool newBlend = Preferences::instance().experimental.newBlend();
+      SelectedLayers selLayers;
+      for (auto layer : sprite->root()->layers())
+        selLayers.insert(layer);
+      job.tx()(new cmd::FlattenLayers(sprite, selLayers, newBlend));
+    }
+
     job.startJobWithCallback(
-      [this, &job, flatten] {
-        Sprite* sprite(job.sprite());
-
-        if (flatten)
-          job.transaction().execute(new cmd::FlattenLayers(sprite));
-
-        job.transaction().execute(
+      [this, &job, sprite] {
+        job.tx()(
           new cmd::SetPixelFormat(
             sprite, m_format,
-            m_ditheringAlgorithm,
-            m_ditheringMatrix,
+            m_dithering,
             &job));             // SpriteJob is a render::TaskDelegate
       });
     job.waitJob();
@@ -501,7 +572,7 @@ std::string ChangePixelFormatCommand::onGetFriendlyName() const
         conversion = Strings::commands_ChangePixelFormat_Grayscale();
         break;
       case IMAGE_INDEXED:
-        switch (m_ditheringAlgorithm) {
+        switch (m_dithering.algorithm()) {
           case render::DitheringAlgorithm::None:
             conversion = Strings::commands_ChangePixelFormat_Indexed();
             break;
@@ -510,6 +581,9 @@ std::string ChangePixelFormatCommand::onGetFriendlyName() const
             break;
           case render::DitheringAlgorithm::Old:
             conversion = Strings::commands_ChangePixelFormat_Indexed_OldDithering();
+            break;
+          case render::DitheringAlgorithm::ErrorDiffusion:
+            conversion = Strings::commands_ChangePixelFormat_Indexed_ErrorDifussion();
             break;
         }
         break;

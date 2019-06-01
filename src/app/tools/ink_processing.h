@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -7,7 +8,6 @@
 #include "app/modules/palettes.h"
 #include "app/util/wrap_point.h"
 #include "app/util/wrap_value.h"
-#include "base/unique_ptr.h"
 #include "doc/blend_funcs.h"
 #include "doc/image_impl.h"
 #include "doc/layer.h"
@@ -27,12 +27,6 @@ namespace tools {
 using namespace gfx;
 using namespace filters;
 
-namespace {
-
-//////////////////////////////////////////////////////////////////////
-// Ink Processing
-//////////////////////////////////////////////////////////////////////
-
 class BaseInkProcessing {
 public:
   virtual ~BaseInkProcessing() { }
@@ -40,6 +34,14 @@ public:
   virtual void prepareForStrokes(ToolLoop* loop, Strokes& strokes) { }
   virtual void prepareForPointShape(ToolLoop* loop, bool firstPoint, int x, int y) { }
 };
+
+typedef std::unique_ptr<BaseInkProcessing> InkProcessingPtr;
+
+namespace {
+
+//////////////////////////////////////////////////////////////////////
+// Ink Processing
+//////////////////////////////////////////////////////////////////////
 
 template<typename Derived>
 class InkProcessing : public BaseInkProcessing {
@@ -376,12 +378,8 @@ public:
       m_area.r /= m_area.count;
       m_area.g /= m_area.count;
       m_area.b /= m_area.count;
-      m_area.a /= 9;
-
-      *m_dstAddress =
-        rgba_blender_normal(*m_srcAddress,
-                            rgba(m_area.r, m_area.g, m_area.b, m_area.a),
-                            m_opacity);
+      m_area.a = (m_area.a/9) * m_opacity / 255;
+      *m_dstAddress = rgba(m_area.r, m_area.g, m_area.b, m_area.a);
     }
     else {
       *m_dstAddress = *m_srcAddress;
@@ -394,8 +392,7 @@ private:
 
     void reset() { count = r = g = b = a = 0; }
 
-    void operator()(RgbTraits::pixel_t color)
-    {
+    void operator()(RgbTraits::pixel_t color) {
       if (rgba_geta(color) != 0) {
         r += rgba_getr(color);
         g += rgba_getg(color);
@@ -427,12 +424,8 @@ public:
 
     if (m_area.count > 0) {
       m_area.v /= m_area.count;
-      m_area.a /= 9;
-
-      *m_dstAddress =
-        graya_blender_normal(*m_srcAddress,
-                             graya(m_area.v, m_area.a),
-                             m_opacity);
+      m_area.a = (m_area.a/9) * m_opacity / 255;
+      *m_dstAddress = graya(m_area.v, m_area.a);
     }
     else {
       *m_dstAddress = *m_srcAddress;
@@ -482,15 +475,9 @@ public:
       m_area.r /= m_area.count;
       m_area.g /= m_area.count;
       m_area.b /= m_area.count;
-      m_area.a /= 9;
-
-      color_t c =
-        rgba_blender_normal(m_palette->getEntry(*m_srcAddress),
-                            rgba(m_area.r, m_area.g, m_area.b, m_area.a),
-                            m_opacity);
-
+      m_area.a = (m_area.a/9) * m_opacity / 255;
       *m_dstAddress = m_rgbmap->mapColor(
-        rgba_getr(c), rgba_getg(c), rgba_getb(c), rgba_geta(c));
+        m_area.r, m_area.g, m_area.b, m_area.a);
     }
     else {
       *m_dstAddress = *m_srcAddress;
@@ -645,7 +632,8 @@ private:
 
     pt = wrap_point(m_tiledMode,
                     gfx::Size(m_srcImageWidth,
-                              m_srcImageHeight), pt);
+                              m_srcImageHeight),
+                    pt, false);
 
     pt.x = MID(0, pt.x, m_srcImageWidth-1);
     pt.y = MID(0, pt.y, m_srcImageHeight-1);
@@ -907,9 +895,10 @@ public:
       imgPos.y *= h;
     }
 
-    render::render_rgba_linear_gradient(
+    render::render_rgba_gradient(
       m_tmpImage.get(), imgPos, u, v, c0, c1,
-      loop->getDitheringMatrix());
+      loop->getDitheringMatrix(),
+      loop->getGradientType());
   }
 
 protected:
@@ -1100,6 +1089,7 @@ public:
     m_height = m_brush->bounds().h;
     m_u = (m_brush->patternOrigin().x - loop->getCelOrigin().x) % m_width;
     m_v = (m_brush->patternOrigin().y - loop->getCelOrigin().y) % m_height;
+    m_transparentColor = loop->sprite()->transparentColor();
   }
 
   void prepareForPointShape(ToolLoop* loop, bool firstPoint, int x, int y) override {
@@ -1130,6 +1120,11 @@ private:
   const Image* m_brushMask;
   int m_opacity;
   int m_u, m_v, m_width, m_height;
+
+  // When we have a image brush from an INDEXED sprite, we need to know
+  // which is the background color in order to translate to transparent color
+  // in a RGBA sprite.
+  color_t m_transparentColor;
 };
 
 template<>
@@ -1142,20 +1137,36 @@ void BrushInkProcessing<RgbTraits>::processPixel(int x, int y) {
   switch (m_brushImage->pixelFormat()) {
     case IMAGE_RGB: {
       c = get_pixel_fast<RgbTraits>(m_brushImage, x, y);
+
+      // We blend the previous image brush pixel with a pixel from the
+      // image preview (*m_dstAddress). Yes, dstImage, in that way we
+      // can overlap image brush self printed areas (auto compose
+      // colors). Doing this, we avoid eraser action of the pixels
+      // with alpha <255 in the image brush.
+      c = rgba_blender_normal(*m_dstAddress, c, m_opacity);
       break;
     }
     case IMAGE_INDEXED: {
+      // TODO m_palette->getEntry(c) does not work because the m_palette member is
+      // loaded the Graya Palette, NOT the original Indexed Palette from where m_brushImage belongs.
+      // This conversion can be possible if we load the palette pointer in m_brush when
+      // is created the custom brush in the Indexed Sprite.
       c = get_pixel_fast<IndexedTraits>(m_brushImage, x, y);
-      c = m_palette->getEntry(c);
+      if (m_transparentColor == c)
+        c = 0;
+      else
+        c = m_palette->getEntry(c);
+      c = rgba_blender_normal(*m_dstAddress, c, m_opacity);
       break;
     }
     case IMAGE_GRAYSCALE: {
       c = get_pixel_fast<GrayscaleTraits>(m_brushImage, x, y);
-      // TODO review this line
-      c = graya(m_palette->getEntry(c), graya_geta(c));
+      c = rgba(graya_getv(c), graya_getv(c), graya_getv(c), graya_geta(c));
+      c = rgba_blender_normal(*m_dstAddress, c, m_opacity);
       break;
     }
     case IMAGE_BITMAP: {
+      // TODO In which circuntance is possible this case?
       c = get_pixel_fast<BitmapTraits>(m_brushImage, x, y);
       c = c ? m_fgColor: m_bgColor;
       break;
@@ -1164,8 +1175,7 @@ void BrushInkProcessing<RgbTraits>::processPixel(int x, int y) {
       ASSERT(false);
       return;
   }
-
-  *m_dstAddress = rgba_blender_normal(*m_srcAddress, c, m_opacity);
+  *m_dstAddress = c;
 }
 
 template<>
@@ -1178,22 +1188,33 @@ void BrushInkProcessing<GrayscaleTraits>::processPixel(int x, int y) {
   switch (m_brushImage->pixelFormat()) {
     case IMAGE_RGB: {
       c = get_pixel_fast<RgbTraits>(m_brushImage, x, y);
-      c = graya(int(rgba_getr(c)) + int(rgba_getg(c)) + int(rgba_getb(c)) / 3,
-                rgba_geta(c));
+      c = graya(rgba_luma(c), rgba_geta(c));
+      c = graya_blender_normal(*m_dstAddress, c, m_opacity);
       break;
     }
     case IMAGE_INDEXED: {
+      // TODO m_palette->getEntry(c) does not work because the
+      // m_palette member is loaded the Graya Palette, NOT the
+      // original Indexed Palette from where m_brushImage belongs.
+      // This conversion can be possible if we load the palette
+      // pointer in m_brush when is created the custom brush in the
+      // Indexed Sprite.
       c = get_pixel_fast<IndexedTraits>(m_brushImage, x, y);
-      c = m_palette->getEntry(c);
-      c = graya(int(rgba_getr(c)) + int(rgba_getg(c)) + int(rgba_getb(c)) / 3,
-                rgba_geta(c));
+      if (m_transparentColor == c)
+        c = 0;
+      else
+        c = m_palette->getEntry(c);
+      c = graya(rgba_luma(c), rgba_geta(c));
+      c = graya_blender_normal(*m_dstAddress, c, m_opacity);
       break;
     }
     case IMAGE_GRAYSCALE: {
       c = get_pixel_fast<GrayscaleTraits>(m_brushImage, x, y);
+      c = graya_blender_normal(*m_dstAddress, c, m_opacity);
       break;
     }
     case IMAGE_BITMAP: {
+      // TODO In which circuntance is possible this case?
       c = get_pixel_fast<BitmapTraits>(m_brushImage, x, y);
       c = c ? m_fgColor: m_bgColor;
       break;
@@ -1202,8 +1223,7 @@ void BrushInkProcessing<GrayscaleTraits>::processPixel(int x, int y) {
       ASSERT(false);
       return;
   }
-
-  *m_dstAddress = graya_blender_normal(*m_srcAddress, c, m_opacity);
+  *m_dstAddress = c;
 }
 
 template<>
@@ -1232,6 +1252,7 @@ void BrushInkProcessing<IndexedTraits>::processPixel(int x, int y) {
       break;
     }
     case IMAGE_BITMAP: {
+      // TODO In which circuntance is possible this case?
       c = get_pixel_fast<BitmapTraits>(m_brushImage, x, y);
       c = c ? m_fgColor: m_bgColor;
       break;
@@ -1240,13 +1261,11 @@ void BrushInkProcessing<IndexedTraits>::processPixel(int x, int y) {
       ASSERT(false);
       return;
   }
-
-  *m_dstAddress = c;
+  if (c != m_transparentColor)
+    *m_dstAddress = c;
 }
 
 //////////////////////////////////////////////////////////////////////
-
-typedef base::UniquePtr<BaseInkProcessing> InkProcessingPtr;
 
 template<template<typename> class T>
 BaseInkProcessing* get_ink_proc(ToolLoop* loop)

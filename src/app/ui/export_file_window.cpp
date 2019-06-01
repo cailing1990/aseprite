@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2018  David Capello
 //
 // This program is distributed under the terms of
@@ -10,9 +11,10 @@
 
 #include "app/ui/export_file_window.h"
 
-#include "app/document.h"
+#include "app/doc.h"
 #include "app/file/file.h"
 #include "app/i18n/strings.h"
+#include "app/site.h"
 #include "app/ui/layer_frame_comboboxes.h"
 #include "app/ui_context.h"
 #include "base/bind.h"
@@ -21,7 +23,6 @@
 #include "base/string.h"
 #include "doc/frame_tag.h"
 #include "doc/selected_frames.h"
-#include "doc/site.h"
 #include "fmt/format.h"
 #include "ui/alert.h"
 
@@ -29,7 +30,7 @@
 
 namespace app {
 
-ExportFileWindow::ExportFileWindow(const Document* doc)
+ExportFileWindow::ExportFileWindow(const Doc* doc)
   : m_doc(doc)
   , m_docPref(Preferences::instance().document(doc))
   , m_preferredResize(1)
@@ -60,7 +61,12 @@ ExportFileWindow::ExportFileWindow(const Document* doc)
   forTwitter()->setSelected(m_docPref.saveCopy.forTwitter());
   adjustResize()->setVisible(false);
 
-  updateAniDir();
+  // Here we don't call updateAniDir() because it's already filled and
+  // set by the function fill_anidir_combobox(). So if the user
+  // exported a tag with a specific AniDir, we want to keep the option
+  // in the preference (instead of the tag's AniDir).
+  //updateAniDir();
+
   updateAdjustResizeButton();
 
   outputFilename()->Change.connect(
@@ -96,6 +102,7 @@ void ExportFileWindow::savePref()
   m_docPref.saveCopy.filename(outputFilenameValue());
   m_docPref.saveCopy.resizeScale(resizeValue());
   m_docPref.saveCopy.layer(layersValue());
+  m_docPref.saveCopy.aniDir(aniDirValue());
   m_docPref.saveCopy.frameTag(framesValue());
   m_docPref.saveCopy.applyPixelRatio(applyPixelRatio());
   m_docPref.saveCopy.forTwitter(isForTwitter());

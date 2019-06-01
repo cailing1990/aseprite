@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -11,7 +12,7 @@
 #include "app/cmd_transaction.h"
 
 #include "app/context.h"
-#include "doc/site.h"
+#include "app/site.h"
 
 #ifdef ENABLE_UI
 #include "app/app.h"
@@ -30,7 +31,7 @@ CmdTransaction::CmdTransaction(const std::string& label,
 {
 }
 
-void CmdTransaction::setNewDocumentRange(const DocumentRange& range)
+void CmdTransaction::setNewDocRange(const DocRange& range)
 {
 #ifdef ENABLE_UI
   if (m_ranges)
@@ -38,7 +39,7 @@ void CmdTransaction::setNewDocumentRange(const DocumentRange& range)
 #endif
 }
 
-void CmdTransaction::commit()
+void CmdTransaction::updateSpritePositionAfter()
 {
   m_spritePositionAfter = calcSpritePosition();
 
@@ -47,7 +48,7 @@ void CmdTransaction::commit()
   // commit/command (on Timeline::onAfterCommandExecution).
   //
   // So m_ranges->m_after is captured explicitly in
-  // setNewDocumentRange().
+  // setNewDocRange().
 }
 
 std::istream* CmdTransaction::documentRangeBeforeExecute() const
@@ -78,9 +79,9 @@ void CmdTransaction::onExecute()
   // very beginning, just to save the current sprite position.
   m_spritePositionBefore = calcSpritePosition();
 #ifdef ENABLE_UI
-  if (isDocumentRangeEnabled()) {
+  if (isDocRangeEnabled()) {
     m_ranges.reset(new Ranges);
-    calcDocumentRange().write(m_ranges->m_before);
+    calcDocRange().write(m_ranges->m_before);
   }
 #endif
 
@@ -119,13 +120,13 @@ size_t CmdTransaction::onMemSize() const
   return size;
 }
 
-doc::SpritePosition CmdTransaction::calcSpritePosition() const
+SpritePosition CmdTransaction::calcSpritePosition() const
 {
-  doc::Site site = context()->activeSite();
-  return doc::SpritePosition(site.layer(), site.frame());
+  Site site = context()->activeSite();
+  return SpritePosition(site.layer(), site.frame());
 }
 
-bool CmdTransaction::isDocumentRangeEnabled() const
+bool CmdTransaction::isDocRangeEnabled() const
 {
 #ifdef ENABLE_UI
   if (App::instance()) {
@@ -137,11 +138,11 @@ bool CmdTransaction::isDocumentRangeEnabled() const
   return false;
 }
 
-DocumentRange CmdTransaction::calcDocumentRange() const
+DocRange CmdTransaction::calcDocRange() const
 {
 #ifdef ENABLE_UI
   // TODO We cannot use Context::activeSite() because it losts
-  //      important information about the DocumentRange() (type and
+  //      important information about the DocRange() (type and
   //      flags).
   if (App::instance()) {
     Timeline* timeline = App::instance()->timeline();
@@ -149,7 +150,7 @@ DocumentRange CmdTransaction::calcDocumentRange() const
       return timeline->range();
   }
 #endif
-  return DocumentRange();
+  return DocRange();
 }
 
 } // namespace app

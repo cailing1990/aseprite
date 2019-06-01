@@ -1,5 +1,6 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2019  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -16,10 +17,11 @@
 #include "app/cmd/set_mask.h"
 #include "app/cmd/trim_cel.h"
 #include "app/console.h"
-#include "app/document.h"
-#include "app/document_api.h"
+#include "app/doc.h"
+#include "app/doc_api.h"
 #include "app/modules/gui.h"
 #include "app/pref/preferences.h"
+#include "app/site.h"
 #include "app/snap_to_grid.h"
 #include "app/ui/editor/pivot_helpers.h"
 #include "app/ui/status_bar.h"
@@ -31,12 +33,12 @@
 #include "doc/algorithm/flip_image.h"
 #include "doc/algorithm/rotate.h"
 #include "doc/algorithm/rotsprite.h"
+#include "doc/algorithm/shift_image.h"
 #include "doc/blend_internals.h"
 #include "doc/cel.h"
 #include "doc/image.h"
 #include "doc/layer.h"
 #include "doc/mask.h"
-#include "doc/site.h"
 #include "doc/sprite.h"
 #include "gfx/region.h"
 #include "render/render.h"
@@ -56,7 +58,7 @@ PixelsMovement::PixelsMovement(
   const char* operationName)
   : m_reader(context)
   , m_site(site)
-  , m_document(static_cast<app::Document*>(site.document()))
+  , m_document(site.document())
   , m_sprite(site.sprite())
   , m_layer(site.layer())
   , m_transaction(context, operationName)
@@ -171,6 +173,20 @@ void PixelsMovement::rotate(double angle)
   updateDocumentMask();
 
   update_screen_for_document(m_document);
+}
+
+void PixelsMovement::shift(int dx, int dy)
+{
+  doc::algorithm::shift_image(m_originalImage, dx, dy, m_currentData.angle());
+  {
+    ContextWriter writer(m_reader, 1000);
+
+    redrawExtraImage();
+    redrawCurrentMask();
+    updateDocumentMask();
+
+    update_screen_for_document(m_document);
+  }
 }
 
 void PixelsMovement::trim()
@@ -454,18 +470,18 @@ void PixelsMovement::moveImage(const gfx::Point& pos, MoveModifier moveModifier)
   }
 }
 
-void PixelsMovement::getDraggedImageCopy(base::UniquePtr<Image>& outputImage,
-                                         base::UniquePtr<Mask>& outputMask)
+void PixelsMovement::getDraggedImageCopy(std::unique_ptr<Image>& outputImage,
+                                         std::unique_ptr<Mask>& outputMask)
 {
   gfx::Rect bounds = m_currentData.transformedBounds();
-  base::UniquePtr<Image> image(Image::create(m_sprite->pixelFormat(), bounds.w, bounds.h));
+  std::unique_ptr<Image> image(Image::create(m_sprite->pixelFormat(), bounds.w, bounds.h));
 
-  drawImage(image, bounds.origin(), false);
+  drawImage(image.get(), bounds.origin(), false);
 
   // Draw mask without shrinking it, so the mask size is equal to the
   // "image" render.
-  base::UniquePtr<Mask> mask(new Mask);
-  drawMask(mask, false);
+  std::unique_ptr<Mask> mask(new Mask);
+  drawMask(mask.get(), false);
 
   // Now we can shrink and crop the image.
   gfx::Rect oldMaskBounds = mask->bounds();
@@ -474,7 +490,7 @@ void PixelsMovement::getDraggedImageCopy(base::UniquePtr<Image>& outputImage,
   if (newMaskBounds != oldMaskBounds) {
     newMaskBounds.x -= oldMaskBounds.x;
     newMaskBounds.y -= oldMaskBounds.y;
-    image.reset(crop_image(image,
+    image.reset(crop_image(image.get(),
                            newMaskBounds.x,
                            newMaskBounds.y,
                            newMaskBounds.w,
@@ -669,11 +685,13 @@ void PixelsMovement::drawImage(doc::Image* dst, const gfx::Point& pt, bool rende
   dst->setMaskColor(m_sprite->transparentColor());
   dst->clear(dst->maskColor());
 
-  if (renderOriginalLayer)
-    render::Render().renderLayer(
+  if (renderOriginalLayer) {
+    render::Render render;
+    render.renderLayer(
       dst, m_layer, m_site.frame(),
       gfx::Clip(bounds.x-pt.x, bounds.y-pt.y, bounds),
       BlendMode::SRC);
+  }
 
   color_t maskColor = m_maskColor;
 

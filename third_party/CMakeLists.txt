@@ -42,14 +42,10 @@ if(NOT USE_SHARED_TINYXML)
   add_subdirectory(tinyxml)
 endif()
 
-if(NOT USE_SHARED_CURL)
+if(REQUIRE_CURL AND NOT USE_SHARED_CURL)
   set(BUILD_RELEASE_DEBUG_DIRS ON BOOL)
   set(CMAKE_USE_OPENSSL OFF CACHE BOOL "Use OpenSSL code. Experimental")
   add_subdirectory(curl)
-endif()
-
-if(USE_ALLEG4_BACKEND AND NOT USE_SHARED_LIBLOADPNG)
-  add_subdirectory(loadpng)
 endif()
 
 if(NOT USE_SHARED_PIXMAN)
@@ -59,21 +55,6 @@ endif()
 if(NOT USE_SHARED_FREETYPE)
   set(SKIP_INSTALL_ALL on)
   set(WITH_BZip2 OFF CACHE BOOL "")
-
-  # If we don't do this, the compilation fails because it looks like
-  # ftgzip.c includes our zlib.h, but uses the zconf.h in the
-  # freetype2 library.
-  if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/freetype2/src/gzip/zlib.h)
-    file(RENAME
-      ${CMAKE_CURRENT_SOURCE_DIR}/freetype2/src/gzip/zlib.h
-      ${CMAKE_CURRENT_SOURCE_DIR}/freetype2/src/gzip/zlib.h.included)
-  endif()
-
-  if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/freetype2/src/gzip/zconf.h)
-    file(RENAME
-      ${CMAKE_CURRENT_SOURCE_DIR}/freetype2/src/gzip/zconf.h
-      ${CMAKE_CURRENT_SOURCE_DIR}/freetype2/src/gzip/zconf.h.included)
-  endif()
 
   add_subdirectory(freetype2)
 
@@ -140,36 +121,50 @@ if(ENABLE_BENCHMARKS)
   add_subdirectory(benchmark)
 endif()
 
-# mujs
-add_library(mujs
-  mujs/jsarray.c
-  mujs/jsboolean.c
-  mujs/jsbuiltin.c
-  mujs/jscompile.c
-  mujs/jsdate.c
-  mujs/jsdtoa.c
-  mujs/jsdump.c
-  mujs/jserror.c
-  mujs/jsfunction.c
-  mujs/jsgc.c
-  mujs/jsintern.c
-  mujs/jslex.c
-  mujs/jsmath.c
-  mujs/jsnumber.c
-  mujs/jsobject.c
-  mujs/json.c
-  mujs/jsparse.c
-  mujs/jsproperty.c
-  mujs/jsregexp.c
-  mujs/jsrun.c
-  mujs/jsstate.c
-  mujs/jsstring.c
-  mujs/jsvalue.c
-  mujs/regexp.c
-  mujs/utf.c
-  mujs/utftype.c)
-target_include_directories(mujs PUBLIC .)
-
 # tinyexpr
 add_library(tinyexpr tinyexpr/tinyexpr.c)
 target_include_directories(tinyexpr PUBLIC tinyexpr)
+
+# lua
+if(ENABLE_SCRIPTING)
+  add_library(lua
+    lua/lapi.c
+    lua/lcode.c
+    lua/lctype.c
+    lua/ldebug.c
+    lua/ldo.c
+    lua/ldump.c
+    lua/lfunc.c
+    lua/lgc.c
+    lua/llex.c
+    lua/lmem.c
+    lua/lobject.c
+    lua/lopcodes.c
+    lua/lparser.c
+    lua/lstate.c
+    lua/lstring.c
+    lua/ltable.c
+    lua/ltm.c
+    lua/lundump.c
+    lua/lvm.c
+    lua/lzio.c
+    lua/ltests.c)
+  add_library(lauxlib lua/lauxlib.c)
+  add_library(lualib
+    lua/lbaselib.c
+    lua/lcorolib.c
+    lua/ldblib.c
+    lua/linit.c
+    lua/liolib.c
+    lua/lmathlib.c
+    lua/loadlib.c
+    lua/loslib.c
+    lua/lstrlib.c
+    lua/ltablib.c
+    lua/lutf8lib.c)
+  target_compile_definitions(lua PUBLIC LUA_FLOORN2I=1)
+  target_include_directories(lua PUBLIC lua)
+  target_include_directories(lauxlib PUBLIC lua)
+  target_include_directories(lualib PUBLIC lua)
+  target_link_libraries(lauxlib lua)
+endif()

@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018-2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -10,10 +11,11 @@
 #include "config.h"
 #endif
 
-#include "app/document.h"
+#include "app/doc.h"
 #include "app/file/file.h"
 #include "app/file/file_format.h"
 #include "app/file/format_options.h"
+#include "app/pref/preferences.h"
 #include "base/cfile.h"
 #include "base/file_handle.h"
 #include "doc/doc.h"
@@ -135,7 +137,7 @@ bool IcoFormat::onLoad(FileOp* fop)
     pixelFormat = IMAGE_RGB;
 
   // Create the sprite with one background layer
-  Sprite* sprite = new Sprite(pixelFormat, width, height, numcolors);
+  Sprite* sprite = new Sprite(ImageSpec((ColorMode)pixelFormat, width, height), numcolors);
   LayerImage* layer = new LayerImage(sprite);
   sprite->root()->addLayer(layer);
 
@@ -277,14 +279,16 @@ bool IcoFormat::onSave(FileOp* fop)
     offset += size;
   }
 
-  base::UniquePtr<Image> image(Image::create(
+  std::unique_ptr<Image> image(Image::create(
       sprite->pixelFormat(),
       sprite->width(),
       sprite->height()));
 
   render::Render render;
+  render.setNewBlend(fop->newBlend());
+
   for (n=frame_t(0); n<num; ++n) {
-    render.renderSprite(image, sprite, n);
+    render.renderSprite(image.get(), sprite, n);
 
     bpp = (sprite->pixelFormat() == IMAGE_INDEXED) ? 8 : 24;
     bw = (((image->width() * bpp / 8) + 3) / 4) * 4;
@@ -327,21 +331,21 @@ bool IcoFormat::onSave(FileOp* fop)
         switch (image->pixelFormat()) {
 
           case IMAGE_RGB:
-            c = get_pixel(image, x, y);
+            c = get_pixel(image.get(), x, y);
             fputc(rgba_getb(c), f);
             fputc(rgba_getg(c), f);
             fputc(rgba_getr(c), f);
             break;
 
           case IMAGE_GRAYSCALE:
-            c = get_pixel(image, x, y);
+            c = get_pixel(image.get(), x, y);
             fputc(graya_getv(c), f);
             fputc(graya_getv(c), f);
             fputc(graya_getv(c), f);
             break;
 
           case IMAGE_INDEXED:
-            c = get_pixel(image, x, y);
+            c = get_pixel(image.get(), x, y);
             fputc(c, f);
             break;
         }
@@ -361,7 +365,7 @@ bool IcoFormat::onSave(FileOp* fop)
         v = 128;
 
         for (b=0; b<8; b++) {
-          c = get_pixel(image, x*8+b, y);
+          c = get_pixel(image.get(), x*8+b, y);
 
           switch (image->pixelFormat()) {
 

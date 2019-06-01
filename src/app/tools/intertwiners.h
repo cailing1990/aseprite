@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018-2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -8,6 +9,15 @@
 
 namespace app {
 namespace tools {
+
+static void addPointsWithoutDuplicatingLastOne(int x, int y, Stroke* stroke)
+{
+  const gfx::Point newPoint(x, y);
+  if (stroke->empty() ||
+      stroke->lastPoint() != newPoint) {
+    stroke->addPoint(newPoint);
+  }
+}
 
 class IntertwineNone : public Intertwine {
 public:
@@ -29,8 +39,27 @@ public:
   bool snapByAngle() override { return true; }
 
   void joinStroke(ToolLoop* loop, const Stroke& stroke) override {
-    if (!stroke.empty())
-      doPointshapePoint(stroke[0].x, stroke[0].y, loop);
+    if (stroke.empty())
+      return;
+
+    gfx::Point mid;
+
+    if (loop->getController()->isTwoPoints() &&
+        (int(loop->getModifiers()) & int(ToolLoopModifiers::kFromCenter))) {
+      int n = 0;
+      for (auto& pt : stroke) {
+        mid.x += pt.x;
+        mid.y += pt.y;
+        ++n;
+      }
+      mid.x /= n;
+      mid.y /= n;
+    }
+    else {
+      mid = stroke[0];
+    }
+
+    doPointshapePoint(mid.x, mid.y, loop);
   }
 
   void fillStroke(ToolLoop* loop, const Stroke& stroke) override {
@@ -39,46 +68,88 @@ public:
 };
 
 class IntertwineAsLines : public Intertwine {
+  Stroke m_lastPointPrinted;
+  Stroke m_pts;
+
+  void saveLastPointAndDoPointshape(ToolLoop* loop, const Stroke& stroke) {
+    m_lastPointPrinted = stroke;
+    doPointshapePoint(stroke[0].x, stroke[0].y, loop);
+  }
+
 public:
   bool snapByAngle() override { return true; }
 
-  void joinStroke(ToolLoop* loop, const Stroke& stroke) override
-  {
+  void joinStroke(ToolLoop* loop, const Stroke& stroke) override {
     if (stroke.size() == 0)
       return;
 
     if (stroke.size() == 1) {
-      doPointshapePoint(stroke[0].x, stroke[0].y, loop);
+      saveLastPointAndDoPointshape(loop, stroke);
+      return;
     }
     else if (stroke.size() >= 2) {
-      for (int c=0; c+1<stroke.size(); ++c) {
-        int x1 = stroke[c].x;
-        int y1 = stroke[c].y;
-        int x2 = stroke[c+1].x;
-        int y2 = stroke[c+1].y;
-
-        algo_line(x1, y1, x2, y2, loop, (AlgoPixel)doPointshapePoint);
+      if (stroke.size() == 2 && stroke[0] == stroke[1]) {
+        if (m_lastPointPrinted.empty()) {
+          saveLastPointAndDoPointshape(loop, stroke);
+          return;
+        }
+        else {
+          if (m_lastPointPrinted[0] != stroke[0] ||
+              loop->getTracePolicy() == TracePolicy::Last) {
+            saveLastPointAndDoPointshape(loop, stroke);
+            return;
+          }
+        }
       }
+      else {
+        doc::AlgoLineWithAlgoPixel lineAlgo = getLineAlgo(loop);
+        for (int c=0; c+1<stroke.size(); ++c) {
+          lineAlgo(
+            stroke[c].x,
+            stroke[c].y,
+            stroke[c+1].x,
+            stroke[c+1].y,
+            (void*)&m_pts,
+            (AlgoPixel)&addPointsWithoutDuplicatingLastOne);
+        }
+
+        // Don't draw the first point in freehand tools (this is to
+        // avoid painting above the last pixel of a freehand stroke,
+        // when we use Shift+click in the Pencil tool to continue the
+        // old stroke). When filled is true we are talking about the
+        // contour tool, so we do all the points.
+        // TODO useful only in the case when brush size = 1px
+        const int start =
+          (loop->getController()->isFreehand() &&
+           !loop->getFilled() ? 1: 0);
+
+        for (int c=start; c<m_pts.size(); ++c)
+          doPointshapePoint(m_pts[c].x, m_pts[c].y, loop);
+
+        ASSERT(!m_lastPointPrinted.empty());
+        m_lastPointPrinted[0] = m_pts[m_pts.size()-1];
+      }
+      m_pts.reset();
     }
 
     // Closed shape (polygon outline)
-    if (loop->getFilled()) {
-      algo_line(stroke[0].x, stroke[0].y,
-                stroke[stroke.size()-1].x,
-                stroke[stroke.size()-1].y, loop, (AlgoPixel)doPointshapePoint);
+    // Note: Contour tool was getting into the condition with no need, so
+    // we add the && !isFreehand to detect this circunstance.
+    // When this is missing, we have problems previewing the stroke of
+    // contour tool, with brush type = kImageBrush with alpha content and
+    // with not Pixel Perfect pencil mode.
+    if (loop->getFilled() && !loop->getController()->isFreehand()) {
+      doPointshapeLine(stroke[stroke.size()-1].x,
+                       stroke[stroke.size()-1].y,
+                       stroke[0].x, stroke[0].y, loop);
     }
   }
 
-  void fillStroke(ToolLoop* loop, const Stroke& stroke) override
-  {
+  void fillStroke(ToolLoop* loop, const Stroke& stroke) override {
     if (stroke.size() < 3) {
       joinStroke(loop, stroke);
       return;
     }
-
-    // Contour
-    joinStroke(loop, stroke);
-
     // Fill content
     doc::algorithm::polygon(stroke.size(), (const int*)&stroke[0], loop, (AlgoHLine)doPointshapeHline);
   }
@@ -88,8 +159,7 @@ public:
 class IntertwineAsRectangles : public Intertwine {
 public:
 
-  void joinStroke(ToolLoop* loop, const Stroke& stroke) override
-  {
+  void joinStroke(ToolLoop* loop, const Stroke& stroke) override {
     if (stroke.size() == 0)
       return;
 
@@ -298,8 +368,7 @@ public:
 class IntertwineAsBezier : public Intertwine {
 public:
 
-  void joinStroke(ToolLoop* loop, const Stroke& stroke) override
-  {
+  void joinStroke(ToolLoop* loop, const Stroke& stroke) override {
     if (stroke.size() == 0)
       return;
 
@@ -308,39 +377,37 @@ public:
         doPointshapePoint(stroke[c].x, stroke[c].y, loop);
       }
       else if (stroke.size()-c == 2) {
-        algo_line(stroke[c].x, stroke[c].y,
-                  stroke[c+1].x, stroke[c+1].y, loop, (AlgoPixel)doPointshapePoint);
+        doPointshapeLine(stroke[c].x, stroke[c].y,
+                         stroke[c+1].x, stroke[c+1].y, loop);
       }
       else if (stroke.size()-c == 3) {
         algo_spline(stroke[c  ].x, stroke[c  ].y,
                     stroke[c+1].x, stroke[c+1].y,
                     stroke[c+1].x, stroke[c+1].y,
-                    stroke[c+2].x, stroke[c+2].y, loop, (AlgoLine)doPointshapeLine);
+                    stroke[c+2].x, stroke[c+2].y, loop,
+                    (AlgoLine)doPointshapeLine);
       }
       else {
         algo_spline(stroke[c  ].x, stroke[c  ].y,
                     stroke[c+1].x, stroke[c+1].y,
                     stroke[c+2].x, stroke[c+2].y,
-                    stroke[c+3].x, stroke[c+3].y, loop, (AlgoLine)doPointshapeLine);
+                    stroke[c+3].x, stroke[c+3].y, loop,
+                    (AlgoLine)doPointshapeLine);
       }
     }
   }
 
-  void fillStroke(ToolLoop* loop, const Stroke& stroke) override
-  {
+  void fillStroke(ToolLoop* loop, const Stroke& stroke) override {
     joinStroke(loop, stroke);
   }
 };
 
 class IntertwineAsPixelPerfect : public Intertwine {
-  static void pixelPerfectLine(int x, int y, Stroke* stroke) {
-    gfx::Point newPoint(x, y);
-    if (stroke->empty() ||
-        stroke->lastPoint() != newPoint) {
-      stroke->addPoint(newPoint);
-    }
-  }
-
+  // It was introduced to know if joinStroke function
+  // was executed inmediatelly after a "Last" trace policy (i.e. after the
+  // user confirms a line draw while he is holding down the SHIFT key), so
+  // we have to ignore printing the first pixel of the line.
+  bool m_retainedTracePolicyLast = false;
   Stroke m_pts;
 
 public:
@@ -350,6 +417,7 @@ public:
 
   void prepareIntertwine() override {
     m_pts.reset();
+    m_retainedTracePolicyLast = false;
   }
 
   void joinStroke(ToolLoop* loop, const Stroke& stroke) override {
@@ -358,23 +426,28 @@ public:
     // new joinStroke() is like a fresh start.  Without this fix, the
     // first stage on LineFreehand will draw a "star" like pattern
     // with lines from the first point to the last point.
-    if (loop->getTracePolicy() == TracePolicy::Last)
+    if (loop->getTracePolicy() == TracePolicy::Last) {
+      m_retainedTracePolicyLast = true;
       m_pts.reset();
+    }
 
     if (stroke.size() == 0)
       return;
-    else if (m_pts.empty() && stroke.size() == 1) {
-      m_pts = stroke;
+    else if (stroke.size() == 1) {
+      if (m_pts.empty())
+        m_pts = stroke;
+      doPointshapePoint(stroke[0].x, stroke[0].y, loop);
+      return;
     }
     else {
       for (int c=0; c+1<stroke.size(); ++c) {
-        algo_line(
+        algo_line_continuous(
           stroke[c].x,
           stroke[c].y,
           stroke[c+1].x,
           stroke[c+1].y,
           (void*)&m_pts,
-          (AlgoPixel)&IntertwineAsPixelPerfect::pixelPerfectLine);
+          (AlgoPixel)&addPointsWithoutDuplicatingLastOne);
       }
     }
 
@@ -386,9 +459,15 @@ public:
         && (m_pts[c+1].x == m_pts[c].x || m_pts[c+1].y == m_pts[c].y)
         && m_pts[c-1].x != m_pts[c+1].x
         && m_pts[c-1].y != m_pts[c+1].y) {
-        ++c;
+        m_pts.erase(c);
       }
 
+      // We must ignore to print the first point of the line after
+      // a joinStroke pass with a retained "Last" trace policy
+      // (i.e. the user confirms draw a line while he is holding
+      // the SHIFT key))
+      if (c == 0 && m_retainedTracePolicyLast)
+        continue;
       doPointshapePoint(m_pts[c].x, m_pts[c].y, loop);
     }
   }
@@ -398,12 +477,8 @@ public:
       joinStroke(loop, stroke);
       return;
     }
-
-    // Contour
-    joinStroke(loop, stroke);
-
     // Fill content
-    doc::algorithm::polygon(stroke.size(), (const int*)&stroke[0], loop, (AlgoHLine)doPointshapeHline);
+    doc::algorithm::polygon(m_pts.size(), (const int*)&m_pts[0], loop, (AlgoHLine)doPointshapeHline);
   }
 };
 

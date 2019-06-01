@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -11,13 +12,12 @@
 #include "app/crash/write_document.h"
 
 #include "app/crash/internals.h"
-#include "app/document.h"
+#include "app/doc.h"
 #include "base/convert_to.h"
 #include "base/fs.h"
 #include "base/fstream_path.h"
 #include "base/serialization.h"
 #include "base/string.h"
-#include "base/unique_ptr.h"
 #include "doc/cancel_io.h"
 #include "doc/cel.h"
 #include "doc/cel_data_io.h"
@@ -34,6 +34,7 @@
 #include "doc/slice_io.h"
 #include "doc/sprite.h"
 #include "doc/string_io.h"
+#include "fixmath/fixmath.h"
 
 #include <fstream>
 #include <map>
@@ -52,7 +53,7 @@ static std::map<ObjectId, base::paths> g_deleteFiles;
 
 class Writer {
 public:
-  Writer(const std::string& dir, app::Document* doc, doc::CancelIO* cancel)
+  Writer(const std::string& dir, Doc* doc, doc::CancelIO* cancel)
     : m_dir(dir)
     , m_doc(doc)
     , m_objVersions(g_docVersions[doc->id()])
@@ -130,14 +131,14 @@ private:
     return (m_cancel && m_cancel->isCanceled());
   }
 
-  bool writeDocumentFile(std::ofstream& s, app::Document* doc) {
+  bool writeDocumentFile(std::ofstream& s, Doc* doc) {
     write32(s, doc->sprite()->id());
     write_string(s, doc->filename());
     return true;
   }
 
   bool writeSprite(std::ofstream& s, Sprite* spr) {
-    write8(s, spr->pixelFormat());
+    write8(s, int(spr->colorMode()));
     write16(s, spr->width());
     write16(s, spr->height());
     write32(s, spr->transparentColor());
@@ -166,6 +167,23 @@ private:
     for (const Slice* slice : spr->slices())
       write32(s, slice->id());
 
+    // Color Space
+    writeColorSpace(s, spr->colorSpace());
+
+    return true;
+  }
+
+  bool writeColorSpace(std::ofstream& s, const gfx::ColorSpacePtr& colorSpace) {
+    write16(s, colorSpace->type());
+    write16(s, colorSpace->flags());
+    write32(s, fixmath::ftofix(colorSpace->gamma()));
+
+    auto& rawData = colorSpace->rawData();
+    write32(s, rawData.size());
+    if (rawData.size() > 0)
+      s.write((const char*)&rawData[0], rawData.size());
+
+    write_string(s, colorSpace->name());
     return true;
   }
 
@@ -300,7 +318,7 @@ private:
   }
 
   std::string m_dir;
-  app::Document* m_doc;
+  Doc* m_doc;
   ObjVersionsMap& m_objVersions;
   base::paths& m_deleteFiles;
   doc::CancelIO* m_cancel;
@@ -312,14 +330,14 @@ private:
 // Public API
 
 bool write_document(const std::string& dir,
-                    app::Document* doc,
+                    Doc* doc,
                     doc::CancelIO* cancel)
 {
   Writer writer(dir, doc, cancel);
   return writer.saveDocument();
 }
 
-void delete_document_internals(app::Document* doc)
+void delete_document_internals(Doc* doc)
 {
   ASSERT(doc);
 

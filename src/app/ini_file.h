@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018-2019  Igara Studio S.A.
 // Copyright (C) 2001-2016  David Capello
 //
 // This program is distributed under the terms of
@@ -9,8 +10,10 @@
 #pragma once
 
 #include "app/color.h"
+#include "base/paths.h"
 #include "gfx/point.h"
 #include "gfx/rect.h"
+#include "gfx/size.h"
 
 namespace app {
 
@@ -45,6 +48,9 @@ namespace app {
   gfx::Point get_config_point(const char* section, const char* name, const gfx::Point& point);
   void set_config_point(const char* section, const char* name, const gfx::Point& point);
 
+  gfx::Size get_config_size(const char* section, const char* name, const gfx::Size& size);
+  void set_config_size(const char* section, const char* name, const gfx::Size& size);
+
   gfx::Rect get_config_rect(const char* section, const char* name, const gfx::Rect& rect);
   void set_config_rect(const char* section, const char* name, const gfx::Rect& rect);
 
@@ -52,6 +58,9 @@ namespace app {
   void set_config_color(const char* section, const char* name, const app::Color& value);
 
   void del_config_value(const char* section, const char* name);
+  void del_config_section(const char* section);
+
+  base::paths enum_config_keys(const char* section);
 
   // Generic get/set_config_value functions
 
@@ -82,6 +91,10 @@ namespace app {
 
   inline gfx::Point get_config_value(const char* section, const char* name, const gfx::Point& value) {
     return get_config_point(section, name, value);
+  }
+
+  inline gfx::Size get_config_value(const char* section, const char* name, const gfx::Size& value) {
+    return get_config_size(section, name, value);
   }
 
   inline gfx::Rect get_config_value(const char* section, const char* name, const gfx::Rect& value) {
@@ -119,6 +132,10 @@ namespace app {
 
   inline void set_config_value(const char* section, const char* name, const gfx::Point& value) {
     set_config_point(section, name, value);
+  }
+
+  inline void set_config_value(const char* section, const char* name, const gfx::Size& value) {
+    set_config_size(section, name, value);
   }
 
   inline void set_config_value(const char* section, const char* name, const gfx::Rect& value) {

@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018-2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -9,14 +10,13 @@
 #pragma once
 
 #include "app/color.h"
+#include "app/context_observer.h"
+#include "app/doc_observer.h"
+#include "app/docs_observer.h"
 #include "app/ui/button_set.h"
 #include "app/ui/color_button.h"
 #include "app/ui/input_chain_element.h"
 #include "app/ui/palette_view.h"
-#include "base/unique_ptr.h"
-#include "doc/context_observer.h"
-#include "doc/document_observer.h"
-#include "doc/documents_observer.h"
 #include "doc/pixel_format.h"
 #include "doc/sort_palette.h"
 #include "obs/connection.h"
@@ -24,7 +24,6 @@
 #include "ui/box.h"
 #include "ui/button.h"
 #include "ui/splitter.h"
-#include "ui/tooltips.h"
 #include "ui/view.h"
 
 namespace ui {
@@ -32,7 +31,6 @@ namespace ui {
 }
 
 namespace app {
-
   class ColorButton;
   class ColorSpectrum;
   class ColorTintShadeTone;
@@ -44,9 +42,9 @@ namespace app {
 
   class ColorBar : public ui::Box
                  , public PaletteViewDelegate
-                 , public doc::ContextObserver
-                 , public doc::DocumentObserver
-                 , public app::InputChainElement {
+                 , public ContextObserver
+                 , public DocObserver
+                 , public InputChainElement {
     static ColorBar* m_instance;
   public:
     enum class ColorSelector {
@@ -60,7 +58,7 @@ namespace app {
 
     static ColorBar* instance() { return m_instance; }
 
-    ColorBar(int align);
+    ColorBar(int align, ui::TooltipManager* tooltipManager);
     ~ColorBar();
 
     void setPixelFormat(PixelFormat pixelFormat);
@@ -84,10 +82,10 @@ namespace app {
     ColorButton* bgColorButton() { return &m_bgColor; }
 
     // ContextObserver impl
-    void onActiveSiteChange(const doc::Site& site) override;
+    void onActiveSiteChange(const Site& site) override;
 
-    // DocumentObserver impl
-    void onGeneralUpdate(doc::DocumentEvent& ev) override;
+    // DocObserver impl
+    void onGeneralUpdate(DocEvent& ev) override;
 
     // InputChainElement impl
     void onNewInputPriority(InputChainElement* element,
@@ -158,9 +156,8 @@ namespace app {
 
     class WarningIcon;
 
-    ui::TooltipManager m_tooltips;
     ButtonSet m_buttons;
-    base::UniquePtr<PalettePopup> m_palettePopup;
+    std::unique_ptr<PalettePopup> m_palettePopup;
     ui::Splitter m_splitter;
     ui::VBox m_palettePlaceholder;
     ui::VBox m_selectorPlaceholder;
@@ -187,13 +184,14 @@ namespace app {
     bool m_fromFgButton;
     bool m_fromBgButton;
 
-    base::UniquePtr<doc::Palette> m_oldPalette;
-    doc::Document* m_lastDocument;
+    std::unique_ptr<doc::Palette> m_oldPalette;
+    Doc* m_lastDocument;
     bool m_ascending;
     obs::scoped_connection m_beforeCmdConn;
     obs::scoped_connection m_afterCmdConn;
     obs::scoped_connection m_fgConn;
     obs::scoped_connection m_bgConn;
+    obs::scoped_connection m_sepConn;
     obs::scoped_connection m_appPalChangeConn;
     ui::MouseButtons m_lastButtons;
 

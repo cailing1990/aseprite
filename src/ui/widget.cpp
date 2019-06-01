@@ -1,4 +1,5 @@
 // Aseprite UI Library
+// Copyright (C) 2018-2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -14,10 +15,10 @@
 
 #include "base/memory.h"
 #include "base/string.h"
-#include "she/display.h"
-#include "she/font.h"
-#include "she/surface.h"
-#include "she/system.h"
+#include "os/display.h"
+#include "os/font.h"
+#include "os/surface.h"
+#include "os/system.h"
 #include "ui/init_theme_event.h"
 #include "ui/intern.h"
 #include "ui/layout_io.h"
@@ -45,14 +46,6 @@
 namespace ui {
 
 using namespace gfx;
-
-static inline void mark_dirty_flag(Widget* widget)
-{
-  while (widget) {
-    widget->enableFlags(DIRTY);
-    widget = widget->parent();
-  }
-}
 
 WidgetType register_widget_type()
 {
@@ -162,7 +155,7 @@ void Widget::setTextQuiet(const std::string& text)
   enableFlags(HAS_TEXT);
 }
 
-she::Font* Widget::font() const
+os::Font* Widget::font() const
 {
   if (!m_font && m_theme)
     m_font = m_theme->getWidgetFont(this);
@@ -416,18 +409,13 @@ Manager* Widget::manager() const
   return Manager::getDefault();
 }
 
-void Widget::getParents(bool ascendant, WidgetsList& parents)
+int Widget::getChildIndex(Widget* child)
 {
-  assert_ui_thread();
-
-  for (Widget* widget=this; widget; widget=widget->m_parent) {
-    // append parents in tail
-    if (ascendant)
-      parents.push_back(widget);
-    // append parents in head
-    else
-      parents.insert(parents.begin(), widget);
-  }
+  auto it = std::find(m_children.begin(), m_children.end(), child);
+  if (it != m_children.end())
+    return it - m_children.begin();
+  else
+    return -1;
 }
 
 Widget* Widget::nextSibling()
@@ -596,6 +584,19 @@ void Widget::insertChild(int index, Widget* child)
 
   m_children.insert(m_children.begin()+index, child);
   child->m_parent = this;
+}
+
+void Widget::moveChildTo(Widget* thisChild, Widget* toThisPosition)
+{
+  auto itA = std::find(m_children.begin(), m_children.end(), thisChild);
+  auto itB = std::find(m_children.begin(), m_children.end(), toThisPosition);
+  if (itA == m_children.end()) {
+    ASSERT(false);
+    return;
+  }
+  int index = itB - m_children.begin();
+  m_children.erase(itA);
+  m_children.insert(m_children.begin() + index, thisChild);
 }
 
 // ===============================================================
@@ -808,9 +809,8 @@ void Widget::getDrawableRegion(gfx::Region& region, DrawableRegionFlags flags)
     view = View::getView(manager);
 
     Rect cpos;
-    if (view) {
+    if (view)
       cpos = static_cast<View*>(view)->viewportBounds();
-    }
     else
       cpos = manager->childrenBounds();
 
@@ -991,7 +991,7 @@ void Widget::flushRedraw()
       for (c=0; c<nrects; ++c, ++it, --count) {
         // Create the draw message
         msg = new PaintMessage(count, *it);
-        msg->addRecipient(widget);
+        msg->setRecipient(widget);
 
         // Enqueue the draw message
         manager->enqueueMessage(msg);
@@ -1103,41 +1103,36 @@ void Widget::setTransparent(bool transparent)
 
 void Widget::invalidate()
 {
-  // TODO we should use invalidateRect(bounds()) here.
-
-  if (isVisible()) {
-    m_updateRegion.clear();
-    getDrawableRegion(m_updateRegion, kCutTopWindows);
-
-    mark_dirty_flag(this);
-
-    for (auto child : m_children)
-      child->invalidate();
-  }
+  assert_ui_thread();
+  if (!hasFlags(HIDDEN))        // Quick filter for hidden widgets
+    onInvalidateRegion(Region(bounds()));
 }
 
 void Widget::invalidateRect(const gfx::Rect& rect)
 {
-  if (isVisible())
-    invalidateRegion(Region(rect));
+  assert_ui_thread();
+  if (!hasFlags(HIDDEN))        // Quick filter for hidden widgets
+    onInvalidateRegion(Region(rect));
 }
 
 void Widget::invalidateRegion(const Region& region)
 {
-  onInvalidateRegion(region);
+  assert_ui_thread();
+  if (!hasFlags(HIDDEN))        // Quick filter for hidden widgets
+    onInvalidateRegion(region);
 }
 
 class DeleteGraphicsAndSurface {
 public:
-  DeleteGraphicsAndSurface(const gfx::Rect& clip, she::Surface* surface)
+  DeleteGraphicsAndSurface(const gfx::Rect& clip, os::Surface* surface)
     : m_pt(clip.origin()), m_surface(surface) {
   }
 
   void operator()(Graphics* graphics) {
     {
-      she::Surface* dst = she::instance()->defaultDisplay()->getSurface();
-      she::SurfaceLock lockSrc(m_surface);
-      she::SurfaceLock lockDst(dst);
+      os::Surface* dst = os::instance()->defaultDisplay()->getSurface();
+      os::SurfaceLock lockSrc(m_surface);
+      os::SurfaceLock lockDst(dst);
       m_surface->blitTo(
         dst, 0, 0, m_pt.x, m_pt.y,
         m_surface->width(), m_surface->height());
@@ -1148,19 +1143,19 @@ public:
 
 private:
   gfx::Point m_pt;
-  she::Surface* m_surface;
+  os::Surface* m_surface;
 };
 
 GraphicsPtr Widget::getGraphics(const gfx::Rect& clip)
 {
   GraphicsPtr graphics;
-  she::Surface* surface;
-  she::Surface* defaultSurface = she::instance()->defaultDisplay()->getSurface();
+  os::Surface* surface;
+  os::Surface* defaultSurface = os::instance()->defaultDisplay()->getSurface();
 
   // In case of double-buffering, we need to create the temporary
   // buffer only if the default surface is the screen.
   if (isDoubleBuffered() && defaultSurface->isDirectToScreen()) {
-    surface = she::instance()->createSurface(clip.w, clip.h);
+    surface = os::instance()->createSurface(clip.w, clip.h);
     graphics.reset(new Graphics(surface, -clip.x, -clip.y),
       DeleteGraphicsAndSurface(clip, surface));
   }
@@ -1295,10 +1290,8 @@ void Widget::releaseFocus()
     manager()->freeFocus();
 }
 
-/**
- * Captures the mouse to send all the future mouse messsages to the
- * specified widget (included the kMouseMoveMessage and kSetCursorMessage).
- */
+// Captures the mouse to send all the future mouse messsages to the
+// specified widget (included the kMouseMoveMessage and kSetCursorMessage).
 void Widget::captureMouse()
 {
   if (!manager()->getCapture()) {
@@ -1306,9 +1299,7 @@ void Widget::captureMouse()
   }
 }
 
-/**
- * Releases the capture of the mouse events.
- */
+// Releases the capture of the mouse events.
 void Widget::releaseMouse()
 {
   if (manager()->getCapture() == this) {
@@ -1329,7 +1320,7 @@ bool Widget::offerCapture(ui::MouseMessage* mouseMsg, int widget_type)
         mouseMsg->buttons(),
         mouseMsg->modifiers(),
         mouseMsg->position());
-      mouseMsg2->addRecipient(pick);
+      mouseMsg2->setRecipient(pick);
       manager()->enqueueMessage(mouseMsg2);
       return true;
     }
@@ -1337,24 +1328,9 @@ bool Widget::offerCapture(ui::MouseMessage* mouseMsg, int widget_type)
   return false;
 }
 
-bool Widget::hasFocus() const
-{
-  return hasFlags(HAS_FOCUS);
-}
-
-bool Widget::hasMouse() const
-{
-  return hasFlags(HAS_MOUSE);
-}
-
 bool Widget::hasMouseOver() const
 {
   return (this == pick(get_mouse_position()));
-}
-
-bool Widget::hasCapture() const
-{
-  return hasFlags(HAS_CAPTURE);
 }
 
 void Widget::setMnemonic(int mnemonic)
@@ -1406,10 +1382,6 @@ bool Widget::onProcessMessage(Message* msg)
 
   switch (msg->type()) {
 
-    case kFunctionMessage:
-      static_cast<FunctionMessage*>(msg)->call();
-      break;
-
     case kOpenMessage:
     case kCloseMessage:
     case kWinMoveMessage:
@@ -1446,7 +1418,7 @@ bool Widget::onProcessMessage(Message* msg)
     case kMouseMoveMessage:
     case kMouseWheelMessage:
       // Propagate the message to the parent.
-      if (parent() != NULL)
+      if (parent())
         return parent()->sendMessage(msg);
       else
         break;
@@ -1459,6 +1431,7 @@ bool Widget::onProcessMessage(Message* msg)
         set_mouse_cursor(kArrowCursor);
         return true;
       }
+      break;
 
   }
 
@@ -1470,8 +1443,10 @@ bool Widget::onProcessMessage(Message* msg)
   }
 
   // Propagate the message to the parent.
-  if (msg->propagateToParent() && parent())
+  if (msg->propagateToParent() && parent() &&
+      msg->commonAncestor() != parent()) {
     return parent()->sendMessage(msg);
+  }
 
   return false;
 }
@@ -1482,21 +1457,22 @@ bool Widget::onProcessMessage(Message* msg)
 
 void Widget::onInvalidateRegion(const Region& region)
 {
-  if (isVisible() && region.contains(bounds()) != Region::Out) {
-    Region reg1;
-    reg1.createUnion(m_updateRegion, region);
-    {
-      Region reg2;
-      getDrawableRegion(reg2, kCutTopWindows);
-      m_updateRegion.createIntersection(reg1, reg2);
-    }
-    reg1.createSubtraction(region, m_updateRegion);
+  if (!isVisible() || region.contains(bounds()) == Region::Out)
+    return;
 
-    mark_dirty_flag(this);
-
-    for (auto child : m_children)
-      child->invalidateRegion(reg1);
+  Region reg1;
+  reg1.createUnion(m_updateRegion, region);
+  {
+    Region reg2;
+    getDrawableRegion(reg2, kCutTopWindows);
+    m_updateRegion.createIntersection(reg1, reg2);
   }
+  reg1.createSubtraction(region, m_updateRegion);
+
+  setDirtyFlag();
+
+  for (auto child : m_children)
+    child->invalidateRegion(reg1);
 }
 
 void Widget::onSizeHint(SizeHintEvent& ev)
@@ -1599,6 +1575,9 @@ double Widget::onGetTextDouble() const
 
 void Widget::offsetWidgets(int dx, int dy)
 {
+  if (dx == 0 && dy == 0)
+    return;
+
   m_updateRegion.offset(dx, dy);
   m_bounds.offset(dx, dy);
 
@@ -1608,6 +1587,15 @@ void Widget::offsetWidgets(int dx, int dy)
 
   for (auto child : m_children)
     child->offsetWidgets(dx, dy);
+}
+
+void Widget::setDirtyFlag()
+{
+  Widget* widget = this;
+  while (widget) {
+    widget->enableFlags(DIRTY);
+    widget = widget->parent();
+  }
 }
 
 } // namespace ui

@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2017  David Capello
 //
 // This program is distributed under the terms of
@@ -11,14 +12,13 @@
 #include "app/cmd/with_sprite.h"
 #include "app/cmd_sequence.h"
 #include "doc/pixel_format.h"
-#include "render/dithering_algorithm.h"
 
 namespace doc {
   class Sprite;
 }
 
 namespace render {
-  class DitheringMatrix;
+  class Dithering;
   class TaskDelegate;
 }
 
@@ -30,8 +30,7 @@ namespace cmd {
   public:
     SetPixelFormat(doc::Sprite* sprite,
                    const doc::PixelFormat newFormat,
-                   const render::DitheringAlgorithm ditheringAlgorithm,
-                   const render::DitheringMatrix& ditheringMatrix,
+                   const render::Dithering& dithering,
                    render::TaskDelegate* delegate);
 
   protected:

@@ -9,7 +9,6 @@
 #pragma once
 
 #include "app/file_selector.h"
-#include "base/unique_ptr.h"
 #include "ui/window.h"
 
 #include "file_selector.xml.h"
@@ -53,6 +52,7 @@ namespace app {
     void onGoForward();
     void onGoUp();
     void onNewFolder();
+    void onChangeViewType();
     void onLocationCloseListBox();
     void onFileTypeChange();
     void onFileListFileSelected();

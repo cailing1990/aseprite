@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2018  David Capello
 //
 // This program is distributed under the terms of
@@ -21,6 +22,7 @@ static doc::ImageBufferPtr g_renderBuffer;
 EditorRender::EditorRender()
   : m_render(new render::Render)
 {
+  m_render->setNewBlend(Preferences::instance().experimental.newBlend());
 }
 
 EditorRender::~EditorRender()
@@ -38,12 +40,17 @@ void EditorRender::setNonactiveLayersOpacity(const int opacity)
   m_render->setNonactiveLayersOpacity(opacity);
 }
 
+void EditorRender::setNewBlendMethod(const bool newBlend)
+{
+  m_render->setNewBlend(newBlend);
+}
+
 void EditorRender::setProjection(const render::Projection& projection)
 {
   m_render->setProjection(projection);
 }
 
-void EditorRender::setupBackground(app::Document* doc, doc::PixelFormat pixelFormat)
+void EditorRender::setupBackground(Doc* doc, doc::PixelFormat pixelFormat)
 {
   DocumentPreferences& docPref = Preferences::instance().document(doc);
   render::BgType bgType;
@@ -69,6 +76,10 @@ void EditorRender::setupBackground(app::Document* doc, doc::PixelFormat pixelFor
     case app::gen::BgType::CHECKED_1x1:
       bgType = render::BgType::CHECKED;
       tile = gfx::Size(1, 1);
+      break;
+    case app::gen::BgType::CHECKED_CUSTOM:
+      bgType = render::BgType::CHECKED;
+      tile = docPref.bg.size();
       break;
     default:
       bgType = render::BgType::TRANSPARENT;
@@ -150,11 +161,11 @@ void EditorRender::renderSprite(
   m_render->renderSprite(dstImage, sprite, frame, area);
 }
 
-void EditorRender::renderBackground(
+void EditorRender::renderCheckedBackground(
   doc::Image* image,
   const gfx::Clip& area)
 {
-  m_render->renderBackground(image, area);
+  m_render->renderCheckedBackground(image, area);
 }
 
 void EditorRender::renderImage(

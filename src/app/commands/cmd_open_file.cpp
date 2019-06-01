@@ -14,7 +14,7 @@
 #include "app/commands/command.h"
 #include "app/commands/params.h"
 #include "app/console.h"
-#include "app/document.h"
+#include "app/doc.h"
 #include "app/file/file.h"
 #include "app/file_selector.h"
 #include "app/job.h"
@@ -26,7 +26,6 @@
 #include "base/bind.h"
 #include "base/fs.h"
 #include "base/thread.h"
-#include "base/unique_ptr.h"
 #include "doc/sprite.h"
 #include "ui/ui.h"
 
@@ -86,8 +85,8 @@ void OpenFileCommand::onLoadParams(const Params& params)
 {
   m_filename = params.get("filename");
   m_folder = params.get("folder"); // Initial folder
-  m_repeatCheckbox = (params.get("repeat_checkbox") == "true");
-  m_oneFrame = (params.get("oneframe") == "true");
+  m_repeatCheckbox = params.get_as<bool>("repeat_checkbox");
+  m_oneFrame = params.get_as<bool>("oneframe");
 
   std::string sequence = params.get("sequence");
   if (m_oneFrame || sequence == "skip")
@@ -134,6 +133,7 @@ void OpenFileCommand::onExecute(Context* context)
 
   int flags =
     FILE_LOAD_DATA_FILE |
+    FILE_LOAD_CREATE_PALETTE |
     (m_repeatCheckbox ? FILE_LOAD_SEQUENCE_ASK_CHECKBOX: 0);
 
   switch (m_seqDecision) {
@@ -152,7 +152,7 @@ void OpenFileCommand::onExecute(Context* context)
     flags |= FILE_LOAD_ONE_FRAME;
 
   for (const auto& filename : filenames) {
-    base::UniquePtr<FileOp> fop(
+    std::unique_ptr<FileOp> fop(
       FileOp::createLoadDocumentOperation(
         context, filename, flags));
     bool unrecent = false;
@@ -181,7 +181,7 @@ void OpenFileCommand::onExecute(Context* context)
         m_usedFiles.push_back(fop->filename());
       }
 
-      OpenFileJob task(fop);
+      OpenFileJob task(fop.get());
       task.showProgressWindow();
 
       // Post-load processing, it is called from the GUI because may require user intervention.
@@ -191,7 +191,7 @@ void OpenFileCommand::onExecute(Context* context)
       if (fop->hasError() && !fop->isStop())
         console.printf(fop->error().c_str());
 
-      Document* document = fop->document();
+      Doc* document = fop->document();
       if (document) {
         if (context->isUIAvailable())
           App::instance()->recentFiles()->addRecentFile(fop->filename().c_str());

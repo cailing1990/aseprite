@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -10,10 +11,11 @@
 
 #include "app/app.h"
 #include "app/color.h"
+#include "app/color_spaces.h"
 #include "app/color_utils.h"
 #include "app/commands/command.h"
 #include "app/console.h"
-#include "app/document.h"
+#include "app/doc.h"
 #include "app/i18n/strings.h"
 #include "app/modules/editors.h"
 #include "app/modules/palettes.h"
@@ -24,7 +26,6 @@
 #include "app/util/clipboard.h"
 #include "app/util/pixel_ratio.h"
 #include "base/bind.h"
-#include "base/unique_ptr.h"
 #include "doc/cel.h"
 #include "doc/image.h"
 #include "doc/layer.h"
@@ -42,7 +43,6 @@ namespace app {
 class NewFileCommand : public Command {
 public:
   NewFileCommand();
-  Command* clone() const override { return new NewFileCommand(*this); }
 
 protected:
   void onExecute(Context* context) override;
@@ -73,12 +73,12 @@ void NewFileCommand::onExecute(Context* context)
   app::gen::NewSprite window;
 
   // Default values: Indexed, 320x240, Background color
-  PixelFormat format = pref.newFile.colorMode();
+  doc::ColorMode colorMode = pref.newFile.colorMode();
   // Invalid format in config file.
-  if (format != IMAGE_RGB &&
-      format != IMAGE_INDEXED &&
-      format != IMAGE_GRAYSCALE) {
-    format = IMAGE_INDEXED;
+  if (colorMode != ColorMode::RGB &&
+      colorMode != ColorMode::INDEXED &&
+      colorMode != ColorMode::GRAYSCALE) {
+    colorMode = ColorMode::INDEXED;
   }
   int w = pref.newFile.width();
   int h = pref.newFile.height();
@@ -97,7 +97,7 @@ void NewFileCommand::onExecute(Context* context)
   window.height()->setTextf("%d", MAX(1, h));
 
   // Select image-type
-  window.colorMode()->setSelectedItem(format);
+  window.colorMode()->setSelectedItem(int(colorMode));
 
   // Select background color
   window.bgColor()->setSelectedItem(bg);
@@ -129,15 +129,15 @@ void NewFileCommand::onExecute(Context* context)
     bool ok = false;
 
     // Get the options
-    format = (doc::PixelFormat)window.colorMode()->selectedItem();
+    colorMode = (doc::ColorMode)window.colorMode()->selectedItem();
     w = window.width()->textInt();
     h = window.height()->textInt();
     bg = window.bgColor()->selectedItem();
 
-    static_assert(IMAGE_RGB == 0, "RGB pixel format should be 0");
-    static_assert(IMAGE_INDEXED == 2, "Indexed pixel format should be 2");
+    static_assert(int(ColorMode::RGB) == 0, "RGB pixel format should be 0");
+    static_assert(int(ColorMode::INDEXED) == 2, "Indexed pixel format should be 2");
 
-    format = MID(IMAGE_RGB, format, IMAGE_INDEXED);
+    colorMode = MID(ColorMode::RGB, colorMode, ColorMode::INDEXED);
     w = MID(1, w, DOC_SPRITE_MAX_WIDTH);
     h = MID(1, h, DOC_SPRITE_MAX_HEIGHT);
     bg = MID(0, bg, 2);
@@ -154,23 +154,28 @@ void NewFileCommand::onExecute(Context* context)
       // Save the configuration
       pref.newFile.width(w);
       pref.newFile.height(h);
-      pref.newFile.colorMode(format);
+      pref.newFile.colorMode(colorMode);
       pref.newFile.backgroundColor(bg);
       pref.newFile.advanced(window.advancedCheck()->isSelected());
       pref.newFile.pixelRatio(window.pixelRatio()->getValue());
 
       // Create the new sprite
-      ASSERT(format == IMAGE_RGB || format == IMAGE_GRAYSCALE || format == IMAGE_INDEXED);
+      ASSERT(colorMode == ColorMode::RGB ||
+             colorMode == ColorMode::GRAYSCALE ||
+             colorMode == ColorMode::INDEXED);
       ASSERT(w > 0 && h > 0);
 
-      base::UniquePtr<Sprite> sprite(Sprite::createBasicSprite(format, w, h, ncolors));
+      std::unique_ptr<Sprite> sprite(
+        Sprite::createBasicSprite(
+          ImageSpec(colorMode, w, h, 0,
+                    get_working_rgb_space_from_preferences()), ncolors));
 
       if (window.advancedCheck()->isSelected()) {
         sprite->setPixelRatio(
           base::convert_to<PixelRatio>(window.pixelRatio()->getValue()));
       }
 
-      if (sprite->pixelFormat() != IMAGE_GRAYSCALE)
+      if (sprite->colorMode() != ColorMode::GRAYSCALE)
         get_default_palette()->copyColorsTo(sprite->palette(frame_t(0)));
 
       // If the background color isn't transparent, we have to
@@ -200,7 +205,7 @@ void NewFileCommand::onExecute(Context* context)
       }
 
       // Show the sprite to the user
-      base::UniquePtr<Document> doc(new Document(sprite));
+      std::unique_ptr<Doc> doc(new Doc(sprite.get()));
       sprite.release();
       sprintf(buf, "Sprite-%04d", ++_sprite_counter);
       doc->setFilename(buf);

@@ -93,7 +93,7 @@ public:
     gfx::Point pt = wrap_point(loop->getTiledMode(),
                                gfx::Size(srcImage->width(),
                                          srcImage->height()),
-                               gfx::Point(x, y));
+                               gfx::Point(x, y), true);
 
     doc::algorithm::floodfill(
       srcImage,
@@ -103,6 +103,7 @@ public:
       get_pixel(srcImage, pt.x, pt.y),
       loop->getTolerance(),
       loop->getContiguous(),
+      loop->isPixelConnectivityEightConnected(),
       loop, (AlgoHLine)doInkHline);
   }
 

@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2016  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -11,9 +11,9 @@
 #include "app/cmd/add_frame.h"
 
 #include "app/cmd/add_cel.h"
-#include "app/document.h"
+#include "app/doc.h"
+#include "app/doc_event.h"
 #include "doc/cel.h"
-#include "doc/document_event.h"
 #include "doc/layer.h"
 #include "doc/primitives.h"
 #include "doc/sprite.h"
@@ -33,7 +33,7 @@ AddFrame::AddFrame(Sprite* sprite, frame_t newFrame)
 void AddFrame::onExecute()
 {
   Sprite* sprite = this->sprite();
-  app::Document* doc = static_cast<app::Document*>(sprite->document());
+  auto doc = static_cast<Doc*>(sprite->document());
 
   sprite->addFrame(m_newFrame);
   sprite->incrementVersion();
@@ -53,16 +53,16 @@ void AddFrame::onExecute()
   }
 
   // Notify observers about the new frame.
-  DocumentEvent ev(doc);
+  DocEvent ev(doc);
   ev.sprite(sprite);
   ev.frame(m_newFrame);
-  doc->notify_observers<DocumentEvent&>(&DocumentObserver::onAddFrame, ev);
+  doc->notify_observers<DocEvent&>(&DocObserver::onAddFrame, ev);
 }
 
 void AddFrame::onUndo()
 {
   Sprite* sprite = this->sprite();
-  app::Document* doc = static_cast<app::Document*>(sprite->document());
+  auto doc = static_cast<Doc*>(sprite->document());
 
   if (m_addCel)
     m_addCel->undo();
@@ -71,10 +71,10 @@ void AddFrame::onUndo()
   sprite->incrementVersion();
 
   // Notify observers about the new frame.
-  DocumentEvent ev(doc);
+  DocEvent ev(doc);
   ev.sprite(sprite);
   ev.frame(m_newFrame);
-  doc->notify_observers<DocumentEvent&>(&DocumentObserver::onRemoveFrame, ev);
+  doc->notify_observers<DocEvent&>(&DocObserver::onRemoveFrame, ev);
 }
 
 } // namespace cmd

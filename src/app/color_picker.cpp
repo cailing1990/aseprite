@@ -1,5 +1,6 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2019  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -10,13 +11,13 @@
 
 #include "app/color_picker.h"
 
-#include "app/document.h"
+#include "app/doc.h"
 #include "app/pref/preferences.h"
+#include "app/site.h"
 #include "app/util/wrap_point.h"
 #include "doc/cel.h"
 #include "doc/image.h"
 #include "doc/primitives.h"
-#include "doc/site.h"
 #include "doc/sprite.h"
 #include "gfx/point.h"
 #include "render/get_sprite_pixel.h"
@@ -60,7 +61,7 @@ ColorPicker::ColorPicker()
 {
 }
 
-void ColorPicker::pickColor(const doc::Site& site,
+void ColorPicker::pickColor(const Site& site,
                             const gfx::PointF& _pos,
                             const render::Projection& proj,
                             const Mode mode)
@@ -73,7 +74,7 @@ void ColorPicker::pickColor(const doc::Site& site,
 
   // Check tiled mode
   if (sprite && site.document()) {
-    const app::Document* doc = static_cast<const app::Document*>(site.document());
+    auto doc = static_cast<const Doc*>(site.document());
     DocumentPreferences& docPref = Preferences::instance().document(doc);
 
     pos = wrap_pointF(docPref.tiled.mode(),
@@ -88,7 +89,8 @@ void ColorPicker::pickColor(const doc::Site& site,
       m_color = app::Color::fromImage(
         sprite->pixelFormat(),
         render::get_sprite_pixel(sprite, pos.x, pos.y,
-                                 site.frame(), proj));
+                                 site.frame(), proj,
+                                 Preferences::instance().experimental.newBlend()));
 
       doc::CelList cels;
       sprite->pickCels(pos.x, pos.y, site.frame(), 128,

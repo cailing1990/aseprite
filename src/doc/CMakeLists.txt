@@ -29,10 +29,9 @@ add_library(doc-lib
   cel_io.cpp
   cels_range.cpp
   compressed_image.cpp
-  context.cpp
-  conversion_she.cpp
+  conversion_to_surface.cpp
   document.cpp
-  documents.cpp
+  file/act_file.cpp
   file/col_file.cpp
   file/gpl_file.cpp
   file/hex_file.cpp
@@ -59,7 +58,6 @@ add_library(doc-lib
   rgbmap.cpp
   selected_frames.cpp
   selected_layers.cpp
-  site.cpp
   slice.cpp
   slice_io.cpp
   slices.cpp
@@ -70,10 +68,10 @@ add_library(doc-lib
   subobjects_io.cpp
   user_data_io.cpp)
 
-# TODO Remove 'she' as dependency and move conversion_she.cpp/h files
+# TODO Remove 'os' as dependency and move conversion_to_surface.cpp/h files
 #      to other library/layer (render-lib? new conversion-lib?)
 target_link_libraries(doc-lib
-  she
-  gfx-lib
+  laf-os
+  laf-gfx
   fixmath-lib
   laf-base)

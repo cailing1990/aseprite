@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2017  David Capello
 //
 // This program is distributed under the terms of
@@ -15,6 +16,7 @@
 #include "filters/tiled_mode.h"
 #include "gfx/point.h"
 #include "gfx/rect.h"
+#include "render/gradient.h"
 
 namespace gfx {
   class Region;
@@ -38,7 +40,7 @@ namespace render {
 
 namespace app {
   class Context;
-  class Document;
+  class Doc;
 
   namespace tools {
     class Controller;
@@ -72,7 +74,7 @@ namespace app {
       virtual Brush* getBrush() = 0;
 
       // Returns the document to which belongs the sprite.
-      virtual Document* getDocument() = 0;
+      virtual Doc* getDocument() = 0;
 
       // Returns the sprite where we will draw on
       virtual Sprite* sprite() = 0;
@@ -124,9 +126,6 @@ namespace app {
       // Current mask to limit paint area
       virtual Mask* getMask() = 0;
       virtual void setMask(Mask* newMask) = 0;
-
-      // Adds a new slice (only for slice ink)
-      virtual void addSlice(doc::Slice* newSlice) = 0;
 
       // Gets mask X,Y origin coordinates
       virtual gfx::Point getMaskOrigin() = 0;
@@ -180,6 +179,7 @@ namespace app {
       virtual bool getSnapToGrid() = 0;
       virtual bool getStopAtGrid() = 0; // For floodfill-like tools
       virtual gfx::Rect getGridBounds() = 0;
+      virtual bool isPixelConnectivityEightConnected() = 0;
 
       // Returns true if the figure must be filled when we release the
       // mouse (e.g. a filled rectangle, etc.)
@@ -221,12 +221,10 @@ namespace app {
       // Returns true if the loop was canceled by the user
       virtual bool isCanceled() = 0;
 
-      // This region is modified by the ToolLoopManager so then you know
-      // what must be updated in updateDirtyArea().
-      virtual gfx::Region& getDirtyArea() = 0;
+      virtual void limitDirtyAreaToViewport(gfx::Region& rgn) = 0;
 
       // Redraws the dirty area.
-      virtual void updateDirtyArea() = 0;
+      virtual void updateDirtyArea(const gfx::Region& dirtyArea) = 0;
 
       virtual void updateStatusBar(const char* text) = 0;
       virtual gfx::Point statusBarPositionOffset() = 0;
@@ -234,6 +232,10 @@ namespace app {
       // For gradients
       virtual render::DitheringMatrix getDitheringMatrix() = 0;
       virtual render::DitheringAlgorithmBase* getDitheringAlgorithm() = 0;
+      virtual render::GradientType getGradientType() = 0;
+
+      // Called when the user release the mouse on SliceInk
+      virtual void onSliceRect(const gfx::Rect& bounds) = 0;
     };
 
   } // namespace tools

@@ -1,4 +1,5 @@
 // Aseprite UI Library
+// Copyright (C) 2018-2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -16,9 +17,6 @@
 #include "ui/message_type.h"
 #include "ui/mouse_buttons.h"
 #include "ui/pointer_type.h"
-#include "ui/widgets_list.h"
-
-#include <functional>
 
 namespace ui {
 
@@ -27,25 +25,19 @@ namespace ui {
 
   class Message {
     enum Flags {
-      Used = 1,               // Message already used/processed by one widget
-      FromFilter = 2,         // Sent from pre-filter
-      PropagateToChildren = 4,
-      PropagateToParent = 8,
+      FromFilter          = 1,  // Sent from pre-filter
+      PropagateToChildren = 2,
+      PropagateToParent   = 4,
     };
   public:
-    typedef WidgetsList::iterator& recipients_iterator;
-
     Message(MessageType type,
             KeyModifiers modifiers = kKeyUninitializedModifier);
     virtual ~Message();
 
     MessageType type() const { return m_type; }
-    const WidgetsList& recipients() const { return m_recipients; }
-    bool hasRecipients() const { return !m_recipients.empty(); }
-    bool isUsed() const { return hasFlag(Used); }
+    Widget* recipient() const { return m_recipient; }
     bool fromFilter() const { return hasFlag(FromFilter); }
     void setFromFilter(const bool state) { setFlag(FromFilter, state); }
-    void markAsUsed() { setFlag(Used, true); }
     KeyModifiers modifiers() const { return m_modifiers; }
     bool shiftPressed() const { return (m_modifiers & kKeyShiftModifier) == kKeyShiftModifier; }
     bool ctrlPressed() const { return (m_modifiers & kKeyCtrlModifier) == kKeyCtrlModifier; }
@@ -58,16 +50,16 @@ namespace ui {
     bool onlyCmdPressed() const { return m_modifiers == kKeyCmdModifier; }
     bool onlyWinPressed() const { return m_modifiers == kKeyWinModifier; }
 
-    void addRecipient(Widget* widget);
-    void prependRecipient(Widget* widget);
+    void setRecipient(Widget* widget);
     void removeRecipient(Widget* widget);
-
-    void broadcastToChildren(Widget* widget);
 
     bool propagateToChildren() const { return hasFlag(PropagateToChildren); }
     bool propagateToParent() const { return hasFlag(PropagateToParent); }
     void setPropagateToChildren(const bool state) { setFlag(PropagateToChildren, state); }
     void setPropagateToParent(const bool state) { setFlag(PropagateToParent, state); }
+
+    Widget* commonAncestor() { return m_commonAncestor; }
+    void setCommonAncestor(Widget* widget) { m_commonAncestor = widget; }
 
   private:
     bool hasFlag(const Flags flag) const {
@@ -79,19 +71,10 @@ namespace ui {
     }
 
     MessageType m_type;       // Type of message
-    WidgetsList m_recipients; // List of recipients of the message
-    int m_flags;              // Was used
+    int m_flags;              // Special flags for this message
+    Widget* m_recipient;      // Recipient of this message
+    Widget* m_commonAncestor; // Common ancestor between the Leave <-> Enter messages
     KeyModifiers m_modifiers; // Key modifiers pressed when message was created
-  };
-
-  class FunctionMessage : public Message {
-  public:
-    FunctionMessage(std::function<void()>&& f)
-      : Message(kFunctionMessage),
-        m_f(std::move(f)) { }
-    void call() { m_f(); }
-  private:
-    std::function<void()> m_f;
   };
 
   class KeyMessage : public Message {

@@ -1,5 +1,6 @@
 // Aseprite
-// Copyright (C) 2001-2016  David Capello
+// Copyright (C) 2019  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -10,11 +11,11 @@
 
 #include "app/context_access.h"
 #include "app/extra_cel.h"
+#include "app/site.h"
 #include "app/transaction.h"
 #include "app/ui/editor/handle_type.h"
 #include "base/shared_ptr.h"
 #include "doc/algorithm/flip_type.h"
-#include "doc/site.h"
 #include "gfx/size.h"
 #include "obs/connection.h"
 
@@ -25,7 +26,7 @@ namespace doc {
 }
 
 namespace app {
-  class Document;
+  class Doc;
 
   namespace cmd {
     class SetMask;
@@ -78,8 +79,8 @@ namespace app {
 
     // Returns a copy of the current image being dragged with the
     // current transformation.
-    void getDraggedImageCopy(base::UniquePtr<Image>& outputImage,
-                             base::UniquePtr<Mask>& outputMask);
+    void getDraggedImageCopy(std::unique_ptr<Image>& outputImage,
+                             std::unique_ptr<Mask>& outputMask);
 
     // Copies the image being dragged in the current position.
     void stampImage();
@@ -104,6 +105,8 @@ namespace app {
     // Rotates the image and the mask the given angle. It's used to
     // simulate RotateCommand when we're inside MovingPixelsState.
     void rotate(double angle);
+    
+    void shift(int dx, int dy);
 
     const Transformation& getTransformation() const { return m_currentData; }
 
@@ -121,7 +124,7 @@ namespace app {
 
     const ContextReader m_reader;
     Site m_site;
-    Document* m_document;
+    Doc* m_document;
     Sprite* m_sprite;
     Layer* m_layer;
     Transaction m_transaction;

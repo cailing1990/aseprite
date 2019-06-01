@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -11,9 +11,9 @@
 #include "app/app.h"
 #include "app/commands/command.h"
 #include "app/context_access.h"
-#include "app/document_api.h"
+#include "app/doc_api.h"
 #include "app/modules/gui.h"
-#include "app/transaction.h"
+#include "app/tx.h"
 #include "app/ui/status_bar.h"
 #include "doc/cel.h"
 #include "doc/layer.h"
@@ -24,7 +24,6 @@ namespace app {
 class ClearCelCommand : public Command {
 public:
   ClearCelCommand();
-  Command* clone() const override { return new ClearCelCommand(*this); }
 
 protected:
   bool onEnabled(Context* context) override;
@@ -44,10 +43,10 @@ bool ClearCelCommand::onEnabled(Context* context)
 void ClearCelCommand::onExecute(Context* context)
 {
   ContextWriter writer(context);
-  Document* document(writer.document());
+  Doc* document(writer.document());
   bool nonEditableLayers = false;
   {
-    Transaction transaction(writer.context(), "Clear Cel");
+    Tx tx(writer.context(), "Clear Cel");
 
     const Site* site = writer.site();
     if (site->inTimeline() &&
@@ -66,18 +65,18 @@ void ClearCelCommand::onExecute(Context* context)
 
         for (frame_t frame : site->selectedFrames().reversed()) {
           if (layerImage->cel(frame))
-            document->getApi(transaction).clearCel(layerImage, frame);
+            document->getApi(tx).clearCel(layerImage, frame);
         }
       }
     }
     else if (writer.cel()) {
       if (writer.layer()->isEditableHierarchy())
-        document->getApi(transaction).clearCel(writer.cel());
+        document->getApi(tx).clearCel(writer.cel());
       else
         nonEditableLayers = true;
     }
 
-    transaction.commit();
+    tx.commit();
   }
 
   if (nonEditableLayers)

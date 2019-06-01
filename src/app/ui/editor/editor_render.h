@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2018  David Capello
 //
 // This program is distributed under the terms of
@@ -32,7 +33,7 @@ namespace render {
 }
 
 namespace app {
-  class Document;
+  class Doc;
 
   class EditorRender {
   public:
@@ -41,10 +42,11 @@ namespace app {
 
     void setRefLayersVisiblity(const bool visible);
     void setNonactiveLayersOpacity(const int opacity);
+    void setNewBlendMethod(const bool newBlend);
 
     void setProjection(const render::Projection& projection);
 
-    void setupBackground(app::Document* doc, doc::PixelFormat pixelFormat);
+    void setupBackground(Doc* doc, doc::PixelFormat pixelFormat);
     void setTransparentBackground();
 
     void setSelectedLayer(const doc::Layer* layer);
@@ -77,7 +79,7 @@ namespace app {
       const doc::Sprite* sprite,
       doc::frame_t frame,
       const gfx::ClipF& area);
-    void renderBackground(
+    void renderCheckedBackground(
       doc::Image* image,
       const gfx::Clip& area);
     void renderImage(

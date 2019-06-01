@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018-2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -10,12 +11,14 @@
 
 #include "app/context.h"
 
+#include "app/active_site_handler.h"
 #include "app/app.h"
 #include "app/commands/command.h"
 #include "app/commands/commands.h"
 #include "app/console.h"
-#include "app/document.h"
-#include "doc/site.h"
+#include "app/doc.h"
+#include "app/site.h"
+#include "doc/layer.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -23,33 +26,71 @@
 namespace app {
 
 Context::Context()
-  : m_lastSelectedDoc(nullptr)
+  : m_docs(this)
+  , m_lastSelectedDoc(nullptr)
+  , m_transaction(nullptr)
 {
+  m_docs.add_observer(this);
 }
 
-void Context::sendDocumentToTop(doc::Document* document)
+Context::~Context()
+{
+  m_docs.remove_observer(this);
+}
+
+void Context::sendDocumentToTop(Doc* document)
 {
   ASSERT(document != NULL);
 
   documents().move(document, 0);
 }
 
-void Context::setActiveDocument(doc::Document* document)
+void Context::closeDocument(Doc* doc)
+{
+  onCloseDocument(doc);
+}
+
+Site Context::activeSite() const
+{
+  Site site;
+  onGetActiveSite(&site);
+  return site;
+}
+
+Doc* Context::activeDocument() const
+{
+  Site site;
+  onGetActiveSite(&site);
+  return site.document();
+}
+
+void Context::setActiveDocument(Doc* document)
 {
   onSetActiveDocument(document);
 }
 
-app::Document* Context::activeDocument() const
+void Context::setActiveLayer(doc::Layer* layer)
 {
-  return static_cast<app::Document*>(doc::Context::activeDocument());
+  onSetActiveLayer(layer);
+}
+
+void Context::setActiveFrame(const doc::frame_t frame)
+{
+  onSetActiveFrame(frame);
 }
 
 bool Context::hasModifiedDocuments() const
 {
   for (auto doc : documents())
-    if (static_cast<app::Document*>(doc)->isModified())
+    if (doc->isModified())
       return true;
   return false;
+}
+
+void Context::notifyActiveSiteChanged()
+{
+  Site site = activeSite();
+  notify_observers<const Site&>(&ContextObserver::onActiveSiteChange, site);
 }
 
 void Context::executeCommand(const char* commandName)
@@ -122,36 +163,74 @@ void Context::executeCommand(Command* command, const Params& params)
 #endif
 }
 
-void Context::onCreateDocument(doc::CreateDocumentArgs* args)
+void Context::onAddDocument(Doc* doc)
 {
-  args->setDocument(new app::Document(NULL));
+  m_lastSelectedDoc = doc;
+
+  if (m_activeSiteHandler)
+    m_activeSiteHandler->addDoc(doc);
 }
 
-void Context::onAddDocument(doc::Document* doc)
-{
-  m_lastSelectedDoc = static_cast<app::Document*>(doc);
-}
-
-void Context::onRemoveDocument(doc::Document* doc)
+void Context::onRemoveDocument(Doc* doc)
 {
   if (doc == m_lastSelectedDoc)
     m_lastSelectedDoc = nullptr;
+
+  if (m_activeSiteHandler)
+    m_activeSiteHandler->removeDoc(doc);
 }
 
-void Context::onGetActiveSite(doc::Site* site) const
+void Context::onGetActiveSite(Site* site) const
 {
   // Default/dummy site (maybe for batch/command line mode)
-  if (Document* doc = m_lastSelectedDoc) {
-    site->document(doc);
-    site->sprite(doc->sprite());
-    site->layer(doc->sprite()->root()->firstLayer());
-    site->frame(0);
+  if (Doc* doc = m_lastSelectedDoc)
+    activeSiteHandler()->getActiveSiteForDoc(doc, site);
+}
+
+void Context::onSetActiveDocument(Doc* doc)
+{
+  m_lastSelectedDoc = doc;
+}
+
+void Context::onSetActiveLayer(doc::Layer* layer)
+{
+  Doc* newDoc = (layer ? static_cast<Doc*>(layer->sprite()->document()): nullptr);
+  if (newDoc != m_lastSelectedDoc)
+    setActiveDocument(newDoc);
+  if (newDoc)
+    activeSiteHandler()->setActiveLayerInDoc(newDoc, layer);
+}
+
+void Context::onSetActiveFrame(const doc::frame_t frame)
+{
+  if (m_lastSelectedDoc)
+    activeSiteHandler()->setActiveFrameInDoc(m_lastSelectedDoc, frame);
+}
+
+void Context::setTransaction(Transaction* transaction)
+{
+  if (transaction) {
+    ASSERT(!m_transaction);
+    m_transaction = transaction;
+  }
+  else {
+    ASSERT(m_transaction);
+    m_transaction = nullptr;
   }
 }
 
-void Context::onSetActiveDocument(doc::Document* doc)
+ActiveSiteHandler* Context::activeSiteHandler() const
 {
-  m_lastSelectedDoc = static_cast<app::Document*>(doc);
+  if (!m_activeSiteHandler)
+    m_activeSiteHandler.reset(new ActiveSiteHandler);
+  return m_activeSiteHandler.get();
+}
+
+void Context::onCloseDocument(Doc* doc)
+{
+  ASSERT(doc != nullptr);
+  ASSERT(doc->context() == nullptr);
+  delete doc;
 }
 
 } // namespace app

@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018-2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -16,9 +17,9 @@
 #include "app/commands/commands.h"
 #include "app/commands/params.h"
 #include "app/console.h"
-#include "app/document.h"
-#include "app/document_exporter.h"
-#include "app/document_undo.h"
+#include "app/doc.h"
+#include "app/doc_exporter.h"
+#include "app/doc_undo.h"
 #include "app/file/file.h"
 #include "app/filename_formatter.h"
 #include "app/restore_visible_layers.h"
@@ -119,7 +120,7 @@ CliProcessor::CliProcessor(CliDelegate* delegate,
   , m_exporter(nullptr)
 {
   if (options.hasExporterParams())
-    m_exporter.reset(new DocumentExporter);
+    m_exporter.reset(new DocExporter);
 }
 
 void CliProcessor::process(Context* ctx)
@@ -134,10 +135,13 @@ void CliProcessor::process(Context* ctx)
   }
   // Process other options and file names
   else if (!m_options.values().empty()) {
+#ifdef ENABLE_SCRIPTING
+    Params scriptParams;
+#endif
     Console console;
     CliOpenFile cof;
     SpriteSheetType sheetType = SpriteSheetType::None;
-    app::Document* lastDoc = nullptr;
+    Doc* lastDoc = nullptr;
     render::DitheringAlgorithm ditheringAlgorithm = render::DitheringAlgorithm::None;
     std::string ditheringMatrix;
 
@@ -154,12 +158,12 @@ void CliProcessor::process(Context* ctx)
         // --format <format>
         else if (opt == &m_options.format()) {
           if (m_exporter) {
-            DocumentExporter::DataFormat format = DocumentExporter::DefaultDataFormat;
+            DocExporter::DataFormat format = DocExporter::DefaultDataFormat;
 
             if (value.value() == "json-hash")
-              format = DocumentExporter::JsonHashDataFormat;
+              format = DocExporter::JsonHashDataFormat;
             else if (value.value() == "json-array")
-              format = DocumentExporter::JsonArrayDataFormat;
+              format = DocExporter::JsonArrayDataFormat;
 
             m_exporter->setDataFormat(format);
           }
@@ -179,7 +183,11 @@ void CliProcessor::process(Context* ctx)
           if (m_exporter)
             m_exporter->setTextureHeight(strtol(value.value().c_str(), NULL, 0));
         }
-        // --sheet-pack
+        // --sheet-type <sheet-type>
+        // TODO Implement this parameter (never documented, but it's
+        //      shown in --help), anyway some work needed to move the
+        //      sprite sheet size calculation from ExportSpriteSheetCommand
+        //      to DocExporter
         else if (opt == &m_options.sheetType()) {
           if (value.value() == "horizontal")
             sheetType = SpriteSheetType::Horizontal;
@@ -263,6 +271,14 @@ void CliProcessor::process(Context* ctx)
           if (m_exporter)
             m_exporter->setTrimCels(true);
         }
+        // --trim-by-grid
+        else if (opt == &m_options.trimByGrid()) {
+          cof.trim = cof.trimByGrid = true;
+          if (m_exporter) {
+            m_exporter->setTrimCels(true);
+            m_exporter->setTrimByGrid(true);
+          }
+        }
         // --crop x,y,width,height
         else if (opt == &m_options.crop()) {
           std::vector<std::string> parts;
@@ -340,7 +356,7 @@ void CliProcessor::process(Context* ctx)
 
           // Scale all sprites
           for (auto doc : ctx->documents()) {
-            ctx->setActiveDocument(static_cast<app::Document*>(doc));
+            ctx->setActiveDocument(doc);
             ctx->executeCommand(command);
           }
         }
@@ -352,10 +368,12 @@ void CliProcessor::process(Context* ctx)
             ditheringAlgorithm = render::DitheringAlgorithm::Ordered;
           else if (value.value() == "old")
             ditheringAlgorithm = render::DitheringAlgorithm::Old;
+          else if (value.value() == "error-diffusion")
+            ditheringAlgorithm = render::DitheringAlgorithm::ErrorDiffusion;
           else
             throw std::runtime_error("--dithering-algorithm needs a valid algorithm name\n"
                                      "Usage: --dithering-algorithm <algorithm>\n"
-                                     "Where <algorithm> can be none, ordered, or old");
+                                     "Where <algorithm> can be none, ordered, old, or error-diffusion");
         }
         // --dithering-matrix <id>
         else if (opt == &m_options.ditheringMatrix()) {
@@ -383,6 +401,9 @@ void CliProcessor::process(Context* ctx)
               case render::DitheringAlgorithm::Old:
                 params.set("dithering", "old");
                 break;
+              case render::DitheringAlgorithm::ErrorDiffusion:
+                params.set("dithering", "error-diffusion");
+                break;
             }
 
             if (ditheringAlgorithm != render::DitheringAlgorithm::None &&
@@ -397,7 +418,7 @@ void CliProcessor::process(Context* ctx)
           }
 
           for (auto doc : ctx->documents()) {
-            ctx->setActiveDocument(static_cast<app::Document*>(doc));
+            ctx->setActiveDocument(doc);
             ctx->executeCommand(command, params);
           }
         }
@@ -416,7 +437,7 @@ void CliProcessor::process(Context* ctx)
 
           // Shrink all sprites if needed
           for (auto doc : ctx->documents()) {
-            ctx->setActiveDocument(static_cast<app::Document*>(doc));
+            ctx->setActiveDocument(doc);
             scaleWidth = (doc->width() > maxWidth ? maxWidth / doc->width() : 1.0);
             scaleHeight = (doc->height() > maxHeight ? maxHeight / doc->height() : 1.0);
             if (scaleWidth < 1.0 || scaleHeight < 1.0) {
@@ -431,7 +452,17 @@ void CliProcessor::process(Context* ctx)
         // --script <filename>
         else if (opt == &m_options.script()) {
           std::string filename = value.value();
-          m_delegate->execScript(filename);
+          m_delegate->execScript(filename, scriptParams);
+        }
+        // --script-param <name=value>
+        else if (opt == &m_options.scriptParam()) {
+          const std::string& v = value.value();
+          auto i = v.find('=');
+          if (i != std::string::npos)
+            scriptParams.set(v.substr(0, i).c_str(),
+                             v.substr(i+1).c_str());
+          else
+            scriptParams.set(v.c_str(), "1");
         }
 #endif
         // --list-layers
@@ -491,7 +522,7 @@ bool CliProcessor::openFile(Context* ctx, CliOpenFile& cof)
 {
   m_delegate->beforeOpenFile(cof);
 
-  app::Document* oldDoc = ctx->activeDocument();
+  Doc* oldDoc = ctx->activeDocument();
   Command* openCommand = Commands::instance()->byId(CommandId::OpenFile());
   Params params;
   params.set("filename", cof.filename.c_str());
@@ -499,7 +530,7 @@ bool CliProcessor::openFile(Context* ctx, CliOpenFile& cof)
     params.set("oneframe", "true");
   ctx->executeCommand(openCommand, params);
 
-  app::Document* doc = ctx->activeDocument();
+  Doc* doc = ctx->activeDocument();
   // If the active document is equal to the previous one, it
   // means that we couldn't open this specific document.
   if (doc == oldDoc)
@@ -540,7 +571,7 @@ bool CliProcessor::openFile(Context* ctx, CliOpenFile& cof)
         filter_layers(doc->sprite()->allLayers(), cof, filteredLayers);
 
         if (cof.splitLayers) {
-          for (Layer* layer : filteredLayers) {
+          for (Layer* layer : filteredLayers.toAllLayersList()) {
             SelectedLayers oneLayer;
             oneLayer.insert(layer);
 
@@ -580,7 +611,7 @@ void CliProcessor::saveFile(Context* ctx, const CliOpenFile& cof)
 
   Command* trimCommand = Commands::instance()->byId(CommandId::AutocropSprite());
   Command* undoCommand = Commands::instance()->byId(CommandId::Undo());
-  app::Document* doc = cof.document;
+  Doc* doc = cof.document;
   bool clearUndo = false;
 
   if (!cof.crop.isEmpty()) {
@@ -694,8 +725,13 @@ void CliProcessor::saveFile(Context* ctx, const CliOpenFile& cof)
         // don't have sheet .json) Also, we should trim each frame
         // individually (a process that can be done only in
         // FileOp::operate()).
-        if (cof.trim)
-          ctx->executeCommand(trimCommand);
+        if (cof.trim) {
+          Params params;
+          if (cof.trimByGrid) {
+            params.set("byGrid", "true");
+          }
+          ctx->executeCommand(trimCommand, params);
+        }
 
         CliOpenFile itemCof = cof;
         FilenameInfo fnInfo;

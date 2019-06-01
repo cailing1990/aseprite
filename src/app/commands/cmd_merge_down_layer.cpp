@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -15,11 +15,10 @@
 #include "app/cmd/unlink_cel.h"
 #include "app/commands/command.h"
 #include "app/context_access.h"
-#include "app/document.h"
-#include "app/document_api.h"
+#include "app/doc.h"
+#include "app/doc_api.h"
 #include "app/modules/gui.h"
-#include "app/transaction.h"
-#include "base/unique_ptr.h"
+#include "app/tx.h"
 #include "doc/blend_internals.h"
 #include "doc/cel.h"
 #include "doc/image.h"
@@ -34,7 +33,6 @@ namespace app {
 class MergeDownLayerCommand : public Command {
 public:
   MergeDownLayerCommand();
-  Command* clone() const override { return new MergeDownLayerCommand(*this); }
 
 protected:
   bool onEnabled(Context* context) override;
@@ -67,9 +65,9 @@ bool MergeDownLayerCommand::onEnabled(Context* context)
 void MergeDownLayerCommand::onExecute(Context* context)
 {
   ContextWriter writer(context);
-  Document* document(writer.document());
+  Doc* document(writer.document());
   Sprite* sprite(writer.sprite());
-  Transaction transaction(writer.context(), "Merge Down Layer", ModifyDocument);
+  Tx tx(writer.context(), "Merge Down Layer", ModifyDocument);
   LayerImage* src_layer = static_cast<LayerImage*>(writer.layer());
   Layer* dst_layer = src_layer->getPrevious();
 
@@ -107,7 +105,7 @@ void MergeDownLayerCommand::onExecute(Context* context)
         dst_cel->setPosition(src_cel->x(), src_cel->y());
         dst_cel->setOpacity(opacity);
 
-        transaction.execute(new cmd::AddCel(dst_layer, dst_cel));
+        tx(new cmd::AddCel(dst_layer, dst_cel));
       }
       // With destination
       else {
@@ -139,23 +137,29 @@ void MergeDownLayerCommand::onExecute(Context* context)
           opacity,
           src_layer->blendMode());
 
-        transaction.execute(new cmd::SetCelPosition(dst_cel,
+        // First unlink the dst_cel
+        if (dst_cel->links())
+          tx(new cmd::UnlinkCel(dst_cel));
+
+        // Then modify the dst_cel
+        tx(new cmd::SetCelPosition(dst_cel,
             bounds.x, bounds.y));
 
-        if (dst_cel->links())
-          transaction.execute(new cmd::UnlinkCel(dst_cel));
-
-        transaction.execute(new cmd::ReplaceImage(sprite,
+        tx(new cmd::ReplaceImage(sprite,
             dst_cel->imageRef(), new_image));
       }
     }
   }
 
   document->notifyLayerMergedDown(src_layer, dst_layer);
-  document->getApi(transaction).removeLayer(src_layer); // src_layer is deleted inside removeLayer()
+  document->getApi(tx).removeLayer(src_layer); // src_layer is deleted inside removeLayer()
 
-  transaction.commit();
-  update_screen_for_document(document);
+  tx.commit();
+
+#ifdef ENABLE_UI
+  if (context->isUIAvailable())
+    update_screen_for_document(document);
+#endif
 }
 
 Command* CommandFactory::createMergeDownLayerCommand()

@@ -12,7 +12,7 @@
 #include "app/app.h"
 #include "app/commands/command.h"
 #include "app/context.h"
-#include "app/document.h"
+#include "app/doc.h"
 #include "app/pref/preferences.h"
 
 namespace app {
@@ -24,8 +24,6 @@ public:
   ToggleTimelineThumbnailsCommand()
     : Command(CommandId::ToggleTimelineThumbnails(), CmdUIOnlyFlag) {
   }
-
-  Command* clone() const override { return new ToggleTimelineThumbnailsCommand(*this); }
 
 protected:
   bool onChecked(Context* context) override {

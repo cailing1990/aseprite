@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -15,7 +16,7 @@
 #include "app/file_selector.h"
 #include "app/i18n/strings.h"
 #include "app/modules/gui.h"
-#include "app/transaction.h"
+#include "app/tx.h"
 #include "app/util/msk_file.h"
 #include "doc/mask.h"
 #include "doc/sprite.h"
@@ -29,7 +30,6 @@ class LoadMaskCommand : public Command {
 
 public:
   LoadMaskCommand();
-  Command* clone() const override { return new LoadMaskCommand(*this); }
 
 protected:
   void onLoadParams(const Params& params) override;
@@ -68,7 +68,7 @@ void LoadMaskCommand::onExecute(Context* context)
     m_filename = selectedFilename.front();
   }
 
-  base::UniquePtr<Mask> mask(load_msk_file(m_filename.c_str()));
+  std::unique_ptr<Mask> mask(load_msk_file(m_filename.c_str()));
   if (!mask) {
     ui::Alert::show(fmt::format(Strings::alerts_error_loading_file(), m_filename));
     return;
@@ -76,12 +76,11 @@ void LoadMaskCommand::onExecute(Context* context)
 
   {
     ContextWriter writer(reader);
-    Document* document = writer.document();
-    Transaction transaction(writer.context(), "Mask Load", DoesntModifyDocument);
-    transaction.execute(new cmd::SetMask(document, mask));
-    transaction.commit();
+    Doc* document = writer.document();
+    Tx tx(writer.context(), "Mask Load", DoesntModifyDocument);
+    tx(new cmd::SetMask(document, mask.get()));
+    tx.commit();
 
-    document->generateMaskBoundaries();
     update_screen_for_document(document);
   }
 }

@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018-2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -18,6 +19,7 @@
 #include "app/i18n/strings.h"
 #include "app/ini_file.h"
 #include "app/launcher.h"
+#include "app/modules/gui.h"
 #include "app/pref/preferences.h"
 #include "app/recent_files.h"
 #include "app/resource_finder.h"
@@ -32,26 +34,55 @@
 #include "base/version.h"
 #include "doc/image.h"
 #include "fmt/format.h"
+#include "os/display.h"
+#include "os/system.h"
 #include "render/render.h"
-#include "she/display.h"
-#include "she/system.h"
 #include "ui/ui.h"
 
 #include "options.xml.h"
 
 namespace app {
 
-static const char* kSectionGeneralId = "section_general";
-static const char* kSectionBgId = "section_bg";
-static const char* kSectionGridId = "section_grid";
-static const char* kSectionThemeId = "section_theme";
-static const char* kSectionExtensionsId = "section_extensions";
+namespace {
 
-static const char* kInfiniteSymbol = "\xE2\x88\x9E"; // Infinite symbol (UTF-8)
+const char* kSectionGeneralId = "section_general";
+const char* kSectionBgId = "section_bg";
+const char* kSectionGridId = "section_grid";
+const char* kSectionThemeId = "section_theme";
+const char* kSectionExtensionsId = "section_extensions";
+
+const char* kInfiniteSymbol = "\xE2\x88\x9E"; // Infinite symbol (UTF-8)
+
+app::gen::ColorProfileBehavior filesWithCsMap[] = {
+  app::gen::ColorProfileBehavior::DISABLE,
+  app::gen::ColorProfileBehavior::EMBEDDED,
+  app::gen::ColorProfileBehavior::CONVERT,
+  app::gen::ColorProfileBehavior::ASSIGN,
+  app::gen::ColorProfileBehavior::ASK,
+};
+
+app::gen::ColorProfileBehavior missingCsMap[] = {
+  app::gen::ColorProfileBehavior::DISABLE,
+  app::gen::ColorProfileBehavior::ASSIGN,
+  app::gen::ColorProfileBehavior::ASK,
+};
+
+} // anonymous namespace
 
 using namespace ui;
 
 class OptionsWindow : public app::gen::Options {
+
+  class ColorSpaceItem : public ListItem {
+  public:
+    ColorSpaceItem(const os::ColorSpacePtr& cs)
+      : ListItem(cs->gfxColorSpace()->name()),
+        m_cs(cs) {
+    }
+    os::ColorSpacePtr cs() const { return m_cs; }
+  private:
+    os::ColorSpacePtr m_cs;
+  };
 
   class ThemeItem : public ListItem {
   public:
@@ -153,6 +184,27 @@ public:
     recentFiles()->setValue(m_pref.general.recentItems());
     clearRecentFiles()->Click.connect(base::Bind<void>(&OptionsWindow::onClearRecentFiles, this));
 
+    // Template item for active display color profiles
+    m_templateTextForDisplayCS = windowCs()->getItem(2)->text();
+    windowCs()->deleteItem(2);
+
+    // Color profiles
+    resetColorManagement()->Click.connect(base::Bind<void>(&OptionsWindow::onResetColorManagement, this));
+    colorManagement()->Click.connect(base::Bind<void>(&OptionsWindow::onColorManagement, this));
+    {
+      os::instance()->listColorSpaces(m_colorSpaces);
+      for (auto& cs : m_colorSpaces) {
+        if (cs->gfxColorSpace()->type() != gfx::ColorSpace::None)
+          workingRgbCs()->addItem(new ColorSpaceItem(cs));
+      }
+      updateColorProfileControls(m_pref.color.manage(),
+                                 m_pref.color.windowProfile(),
+                                 m_pref.color.windowProfileName(),
+                                 m_pref.color.workingRgbSpace(),
+                                 m_pref.color.filesWithProfile(),
+                                 m_pref.color.missingProfile());
+    }
+
     // Alerts
     resetAlerts()->Click.connect(base::Bind<void>(&OptionsWindow::onResetAlerts, this));
 
@@ -190,12 +242,19 @@ public:
     if (m_pref.general.dataRecovery())
       enableDataRecovery()->setSelected(true);
 
+    if (m_pref.general.keepEditedSpriteData())
+      keepEditedSpriteData()->setSelected(true);
+
     if (m_pref.general.showFullPath())
       showFullPath()->setSelected(true);
 
     dataRecoveryPeriod()->setSelectedItemIndex(
       dataRecoveryPeriod()->findItemIndexByValue(
         base::convert_to<std::string>(m_pref.general.dataRecoveryPeriod())));
+
+    keepEditedSpriteDataLifespan()->setSelectedItemIndex(
+      keepEditedSpriteDataLifespan()->findItemIndexByValue(
+        base::convert_to<std::string>(m_pref.general.keepEditedSpriteDataLifespan())));
 
     if (m_pref.editor.zoomFromCenterWithWheel())
       zoomFromCenterWithWheel()->setSelected(true);
@@ -222,8 +281,8 @@ public:
       moveOnAddMode()->setSelected(true);
 
     // If the platform supports native cursors...
-    if ((int(she::instance()->capabilities()) &
-         int(she::Capabilities::CustomNativeMouseCursor)) != 0) {
+    if ((int(os::instance()->capabilities()) &
+         int(os::Capabilities::CustomNativeMouseCursor)) != 0) {
       if (m_pref.cursor.useNativeCursor())
         nativeCursor()->setSelected(true);
       nativeCursor()->Click.connect(base::Bind<void>(&OptionsWindow::onNativeCursorChange, this));
@@ -281,8 +340,8 @@ public:
 
     selectScalingItems();
 
-    if ((int(she::instance()->capabilities()) &
-         int(she::Capabilities::GpuAccelerationSwitch)) == int(she::Capabilities::GpuAccelerationSwitch)) {
+    if ((int(os::instance()->capabilities()) &
+         int(os::Capabilities::GpuAccelerationSwitch)) == int(os::Capabilities::GpuAccelerationSwitch)) {
       gpuAcceleration()->setSelected(m_pref.general.gpuAcceleration());
     }
     else {
@@ -291,7 +350,7 @@ public:
 
     // If the platform does support native menus, we show the option,
     // in other case, the option doesn't make sense for this platform.
-    if (she::instance()->menus())
+    if (os::instance()->menus())
       showMenuBar()->setSelected(m_pref.general.showMenuBar());
     else
       showMenuBar()->setVisible(false);
@@ -306,6 +365,7 @@ public:
     static_assert(int(app::gen::RightClickMode::SCROLL) == 3, "");
     static_assert(int(app::gen::RightClickMode::RECTANGULAR_MARQUEE) == 4, "");
     static_assert(int(app::gen::RightClickMode::LASSO) == 5, "");
+    static_assert(int(app::gen::RightClickMode::SELECT_LAYER_AND_MOVE) == 6, "");
 
     rightClickBehavior()->addItem("Paint with background color");
     rightClickBehavior()->addItem("Pick foreground color");
@@ -313,26 +373,24 @@ public:
     rightClickBehavior()->addItem("Scroll");
     rightClickBehavior()->addItem("Rectangular Marquee");
     rightClickBehavior()->addItem("Lasso");
+    rightClickBehavior()->addItem("Select Layer & Move");
     rightClickBehavior()->setSelectedItemIndex((int)m_pref.editor.rightClickMode());
 
-    // Zoom with Scroll Wheel
-    wheelZoom()->setSelected(m_pref.editor.zoomWithWheel());
-
-    // Zoom sliding two fingers
-#if __APPLE__
-    slideZoom()->setSelected(m_pref.editor.zoomWithSlide());
-#else
+#ifndef __APPLE__ // Zoom sliding two fingers option only on macOS
     slideZoom()->setVisible(false);
 #endif
 
     // Checked background size
     static_assert(int(app::gen::BgType::CHECKED_16x16) == 0, "");
     static_assert(int(app::gen::BgType::CHECKED_1x1) == 4, "");
+    static_assert(int(app::gen::BgType::CHECKED_CUSTOM) == 5, "");
     checkedBgSize()->addItem("16x16");
     checkedBgSize()->addItem("8x8");
     checkedBgSize()->addItem("4x4");
     checkedBgSize()->addItem("2x2");
     checkedBgSize()->addItem("1x1");
+    checkedBgSize()->addItem("Custom");
+    checkedBgSize()->Change.connect(base::Bind<void>(&OptionsWindow::onCheckedBgSizeChange, this));
 
     // Reset buttons
     resetBg()->Click.connect(base::Bind<void>(&OptionsWindow::onResetBg, this));
@@ -428,16 +486,21 @@ public:
       warnings += "<<- " + Strings::alerts_restart_by_preferences_save_recovery_data_period();
     }
 
+    int newLifespan = base::convert_to<int>(keepEditedSpriteDataLifespan()->getValue());
+    if (keepEditedSpriteData()->isSelected() != m_pref.general.keepEditedSpriteData() ||
+        newLifespan != m_pref.general.keepEditedSpriteDataLifespan()) {
+      m_pref.general.keepEditedSpriteData(keepEditedSpriteData()->isSelected());
+      m_pref.general.keepEditedSpriteDataLifespan(newLifespan);
+
+      warnings += "<<- " + Strings::alerts_restart_by_preferences_keep_edited_sprite_data_lifespan();
+    }
+
     m_pref.editor.zoomFromCenterWithWheel(zoomFromCenterWithWheel()->isSelected());
     m_pref.editor.zoomFromCenterWithKeys(zoomFromCenterWithKeys()->isSelected());
     m_pref.editor.showScrollbars(showScrollbars()->isSelected());
     m_pref.editor.autoScroll(autoScroll()->isSelected());
     m_pref.editor.straightLinePreview(straightLinePreview()->isSelected());
     m_pref.eyedropper.discardBrush(discardBrush()->isSelected());
-    m_pref.editor.zoomWithWheel(wheelZoom()->isSelected());
-#if __APPLE__
-    m_pref.editor.zoomWithSlide(slideZoom()->isSelected());
-#endif
     m_pref.editor.rightClickMode(static_cast<app::gen::RightClickMode>(rightClickBehavior()->getSelectedItemIndex()));
     m_pref.cursor.paintingCursorType(static_cast<app::gen::PaintingCursorType>(paintingCursorType()->getSelectedItemIndex()));
     m_pref.cursor.cursorColor(cursorColor()->getColor());
@@ -454,6 +517,47 @@ public:
     m_pref.guides.autoGuidesColor(autoGuidesColor()->getColor());
     m_pref.slices.defaultColor(defaultSliceColor()->getColor());
 
+    m_pref.color.workingRgbSpace(
+      workingRgbCs()->getItemText(
+        workingRgbCs()->getSelectedItemIndex()));
+    m_pref.color.filesWithProfile(
+      filesWithCsMap[filesWithCs()->getSelectedItemIndex()]);
+    m_pref.color.missingProfile(
+      missingCsMap[missingCs()->getSelectedItemIndex()]);
+
+    int winCs = windowCs()->getSelectedItemIndex();
+    switch (winCs) {
+      case 0:
+        m_pref.color.windowProfile(gen::WindowColorProfile::MONITOR);
+        break;
+      case 1:
+        m_pref.color.windowProfile(gen::WindowColorProfile::SRGB);
+        break;
+      default: {
+        m_pref.color.windowProfile(gen::WindowColorProfile::SPECIFIC);
+
+        std::string name;
+        int j = 2;
+        for (auto& cs : m_colorSpaces) {
+          // We add ICC profiles only
+          auto gfxCs = cs->gfxColorSpace();
+          if (gfxCs->type() != gfx::ColorSpace::ICC)
+            continue;
+
+          if (j == winCs) {
+            name = gfxCs->name();
+            os::instance()->setDisplaysColorSpace(cs);
+            break;
+          }
+          ++j;
+        }
+
+        m_pref.color.windowProfileName(name);
+        break;
+      }
+    }
+    update_displays_color_profile_from_preferences();
+
     m_curPref->show.grid(gridVisible()->isSelected());
     m_curPref->grid.bounds(gridBounds());
     m_curPref->grid.color(gridColor()->getColor());
@@ -466,6 +570,11 @@ public:
     m_curPref->pixelGrid.autoOpacity(pixelGridAutoOpacity()->isSelected());
 
     m_curPref->bg.type(app::gen::BgType(checkedBgSize()->getSelectedItemIndex()));
+    if (m_curPref->bg.type() == app::gen::BgType::CHECKED_CUSTOM) {
+      m_curPref->bg.size(gfx::Size(
+        checkedBgCustomW()->textInt(),
+        checkedBgCustomH()->textInt()));
+    }
     m_curPref->bg.zoom(checkedBgZoom()->isSelected());
     m_curPref->bg.color1(checkedBgColor1()->getColor());
     m_curPref->bg.color2(checkedBgColor2()->getColor());
@@ -514,7 +623,7 @@ public:
       reset_screen = true;
     }
 
-    if (she::instance()->menus() &&
+    if (os::instance()->menus() &&
         m_pref.general.showMenuBar() != showMenuBar()->isSelected()) {
       m_pref.general.showMenuBar(showMenuBar()->isSelected());
     }
@@ -552,6 +661,25 @@ public:
     }
   }
 
+  bool showDialogToInstallExtension(const std::string& filename) {
+    for (Widget* item : sectionListbox()->children()) {
+      if (auto listItem = dynamic_cast<const ListItem*>(item)) {
+        if (listItem->getValue() == kSectionExtensionsId) {
+          sectionListbox()->selectChild(item);
+          break;
+        }
+      }
+    }
+
+    // Install?
+    if (ui::Alert::show(
+          fmt::format(Strings::alerts_install_extension(), filename)) != 1)
+      return false;
+
+    installExtension(filename);
+    return true;
+  }
+
 private:
 
   void fillExtensionsCombobox(ui::ComboBox* combobox,
@@ -583,8 +711,8 @@ private:
 
   void updateScreenScaling() {
     ui::Manager* manager = ui::Manager::getDefault();
-    she::Display* display = manager->getDisplay();
-    she::instance()->setGpuAcceleration(m_pref.general.gpuAcceleration());
+    os::Display* display = manager->getDisplay();
+    os::instance()->setGpuAcceleration(m_pref.general.gpuAcceleration());
     display->setScale(m_pref.general.screenScale());
     manager->setDisplay(display);
   }
@@ -599,8 +727,8 @@ private:
   void onNativeCursorChange() {
     bool state =
       // If the platform supports native cursors...
-      (((int(she::instance()->capabilities()) &
-         int(she::Capabilities::CustomNativeMouseCursor)) != 0) &&
+      (((int(os::instance()->capabilities()) &
+         int(os::Capabilities::CustomNativeMouseCursor)) != 0) &&
        // If the native cursor option is not selec
        !nativeCursor()->isSelected());
 
@@ -637,6 +765,91 @@ private:
     App::instance()->recentFiles()->clear();
   }
 
+  void onColorManagement() {
+    const bool state = colorManagement()->isSelected();
+    windowCsLabel()->setEnabled(state);
+    windowCs()->setEnabled(state);
+    workingRgbCsLabel()->setEnabled(state);
+    workingRgbCs()->setEnabled(state);
+    filesWithCsLabel()->setEnabled(state);
+    filesWithCs()->setEnabled(state);
+    missingCsLabel()->setEnabled(state);
+    missingCs()->setEnabled(state);
+  }
+
+  void onResetColorManagement() {
+    updateColorProfileControls(m_pref.color.manage.defaultValue(),
+                               m_pref.color.windowProfile.defaultValue(),
+                               m_pref.color.windowProfileName.defaultValue(),
+                               m_pref.color.workingRgbSpace.defaultValue(),
+                               m_pref.color.filesWithProfile.defaultValue(),
+                               m_pref.color.missingProfile.defaultValue());
+  }
+
+  void updateColorProfileControls(const bool manage,
+                                  const app::gen::WindowColorProfile& windowProfile,
+                                  const std::string& windowProfileName,
+                                  const std::string& workingRgbSpace,
+                                  const app::gen::ColorProfileBehavior& filesWithProfile,
+                                  const app::gen::ColorProfileBehavior& missingProfile) {
+    colorManagement()->setSelected(manage);
+
+    // Window color profile
+    {
+      int i = 0;
+      if (windowProfile == gen::WindowColorProfile::MONITOR)
+        i = 0;
+      else if (windowProfile == gen::WindowColorProfile::SRGB)
+        i = 1;
+
+      // Delete previous added items in the combobox for each display
+      // (we'll re-add them below).
+      while (windowCs()->getItem(2))
+        windowCs()->deleteItem(2);
+
+      int j = 2;
+      for (auto& cs : m_colorSpaces) {
+        // We add ICC profiles only
+        auto gfxCs = cs->gfxColorSpace();
+        if (gfxCs->type() != gfx::ColorSpace::ICC)
+          continue;
+
+        auto name = gfxCs->name();
+        windowCs()->addItem(fmt::format(m_templateTextForDisplayCS, name));
+        if (windowProfile == gen::WindowColorProfile::SPECIFIC &&
+            windowProfileName == name) {
+          i = j;
+        }
+        ++j;
+      }
+      windowCs()->setSelectedItemIndex(i);
+    }
+
+    // Working color profile
+    for (auto child : *workingRgbCs()) {
+      if (child->text() == workingRgbSpace) {
+        workingRgbCs()->setSelectedItem(child);
+        break;
+      }
+    }
+
+    for (int i=0; i<sizeof(filesWithCsMap)/sizeof(filesWithCsMap[0]); ++i) {
+      if (filesWithCsMap[i] == filesWithProfile) {
+        filesWithCs()->setSelectedItemIndex(i);
+        break;
+      }
+    }
+
+    for (int i=0; i<sizeof(missingCsMap)/sizeof(missingCsMap[0]); ++i) {
+      if (missingCsMap[i] == missingProfile) {
+        missingCs()->setSelectedItemIndex(i);
+        break;
+      }
+    }
+
+    onColorManagement();
+  }
+
   void onResetAlerts() {
     fileFormatDoesntSupportAlert()->resetWithDefaultValue();
     exportAnimationInSequenceAlert()->resetWithDefaultValue();
@@ -644,12 +857,14 @@ private:
     overwriteFilesOnExportSpriteSheetAlert()->resetWithDefaultValue();
     gifOptionsAlert()->resetWithDefaultValue();
     jpegOptionsAlert()->resetWithDefaultValue();
+    svgOptionsAlert()->resetWithDefaultValue();
     advancedModeAlert()->resetWithDefaultValue();
+    invalidFgBgColorAlert()->resetWithDefaultValue();
+    runScriptAlert()->resetWithDefaultValue();
   }
 
   void onChangeBgScope() {
-    int item = bgScope()->getSelectedItemIndex();
-
+    const int item = bgScope()->getSelectedItemIndex();
     switch (item) {
       case 0: m_curPref = &m_globPref; break;
       case 1: m_curPref = &m_docPref; break;
@@ -659,6 +874,22 @@ private:
     checkedBgZoom()->setSelected(m_curPref->bg.zoom());
     checkedBgColor1()->setColor(m_curPref->bg.color1());
     checkedBgColor2()->setColor(m_curPref->bg.color2());
+
+    onCheckedBgSizeChange();
+  }
+
+  void onCheckedBgSizeChange() {
+    if (checkedBgSize()->getSelectedItemIndex() == int(app::gen::BgType::CHECKED_CUSTOM)) {
+      checkedBgCustomW()->setTextf("%d", m_curPref->bg.size().w);
+      checkedBgCustomH()->setTextf("%d", m_curPref->bg.size().h);
+      checkedBgCustomW()->setVisible(true);
+      checkedBgCustomH()->setVisible(true);
+    }
+    else {
+      checkedBgCustomW()->setVisible(false);
+      checkedBgCustomH()->setVisible(false);
+    }
+    sectionBg()->layout();
   }
 
   void onChangeGridScope() {
@@ -691,6 +922,8 @@ private:
     // Reset global preferences (use default values specified in pref.xml)
     if (m_curPref == &m_globPref) {
       checkedBgSize()->setSelectedItemIndex(int(pref.bg.type.defaultValue()));
+      checkedBgCustomW()->setVisible(false);
+      checkedBgCustomH()->setVisible(false);
       checkedBgZoom()->setSelected(pref.bg.zoom.defaultValue());
       checkedBgColor1()->setColor(pref.bg.color1.defaultValue());
       checkedBgColor2()->setColor(pref.bg.color2.defaultValue());
@@ -763,7 +996,7 @@ private:
   }
 
   void refillLanguages() {
-    language()->removeAllItems();
+    language()->deleteAllItems();
     loadLanguages();
   }
 
@@ -963,7 +1196,7 @@ private:
   }
 
   void onAddExtension() {
-    base::paths exts = { "zip" };
+    base::paths exts = { "aseprite-extension", "zip" };
     base::paths filename;
     if (!app::show_file_selector(
           "Add Extension", "", exts,
@@ -971,13 +1204,16 @@ private:
       return;
 
     ASSERT(!filename.empty());
+    installExtension(filename.front());
+  }
 
+  void installExtension(const std::string& filename) {
     try {
       Extensions& exts = App::instance()->extensions();
 
       // Get the extension information from the compressed
       // package.json file.
-      ExtensionInfo info = exts.getCompressedExtensionInfo(filename.front());
+      ExtensionInfo info = exts.getCompressedExtensionInfo(filename);
 
       // Check if the extension already exist
       for (auto ext : exts) {
@@ -1011,8 +1247,7 @@ private:
         break;
       }
 
-      Extension* ext =
-        exts.installCompressedExtension(filename.front(), info);
+      Extension* ext = exts.installCompressedExtension(filename, info);
 
       // Enable extension
       exts.enableExtension(ext, true);
@@ -1020,8 +1255,9 @@ private:
       // Add the new extension in the listbox
       ExtensionItem* item = new ExtensionItem(ext);
       extensionsList()->addChild(item);
-      extensionsList()->selectChild(item);
+      extensionsList()->sortItems();
       extensionsList()->layout();
+      extensionsList()->selectChild(item);
     }
     catch (const std::exception& ex) {
       Console::showException(ex);
@@ -1134,15 +1370,20 @@ private:
   std::string m_restoreThisTheme;
   int m_restoreScreenScaling;
   int m_restoreUIScaling;
+  std::vector<os::ColorSpacePtr> m_colorSpaces;
+  std::string m_templateTextForDisplayCS;
 };
 
 class OptionsCommand : public Command {
 public:
   OptionsCommand();
-  Command* clone() const override { return new OptionsCommand(*this); }
 
 protected:
+  void onLoadParams(const Params& params) override;
   void onExecute(Context* context) override;
+
+private:
+  std::string m_installExtensionFilename;
 };
 
 OptionsCommand::OptionsCommand()
@@ -1154,11 +1395,23 @@ OptionsCommand::OptionsCommand()
     preferences.general.expandMenubarOnMouseover());
 }
 
+void OptionsCommand::onLoadParams(const Params& params)
+{
+  m_installExtensionFilename = params.get("installExtension");
+}
+
 void OptionsCommand::onExecute(Context* context)
 {
   static int curSection = 0;
 
   OptionsWindow window(context, curSection);
+  window.openWindow();
+
+  if (!m_installExtensionFilename.empty()) {
+    if (!window.showDialogToInstallExtension(m_installExtensionFilename))
+      return;
+  }
+
   window.openWindowInForeground();
   if (window.ok())
     window.saveConfig();

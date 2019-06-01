@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019 Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -17,6 +18,7 @@
 #include "app/commands/cmd_rotate.h"
 #include "app/commands/command.h"
 #include "app/commands/commands.h"
+#include "app/commands/move_thing.h"
 #include "app/console.h"
 #include "app/modules/gui.h"
 #include "app/pref/preferences.h"
@@ -34,8 +36,8 @@
 #include "app/ui_context.h"
 #include "app/util/clipboard.h"
 #include "base/bind.h"
+#include "base/gcd.h"
 #include "base/pi.h"
-#include "base/unique_ptr.h"
 #include "doc/algorithm/flip_image.h"
 #include "doc/mask.h"
 #include "doc/sprite.h"
@@ -133,10 +135,15 @@ void MovingPixelsState::rotate(double angle)
 {
   m_pixelsMovement->rotate(angle);
 }
-  
+
 void MovingPixelsState::flip(doc::algorithm::FlipType flipType)
 {
   m_pixelsMovement->flipImage(flipType);
+}
+
+void MovingPixelsState::shift(int dx, int dy)
+{
+  m_pixelsMovement->shift(dx, dy);
 }
 
 void MovingPixelsState::onEnterState(Editor* editor)
@@ -164,7 +171,7 @@ EditorState::LeaveAction MovingPixelsState::onLeaveState(Editor* editor, EditorS
       try {
         m_pixelsMovement->dropImage();
       }
-      catch (const LockedDocumentException& ex) {
+      catch (const LockedDocException& ex) {
         // This is one of the worst possible scenarios. We want to
         // drop pixels because we're leaving this state (e.g. the user
         // changed the current frame/layer, so we came from
@@ -237,7 +244,7 @@ bool MovingPixelsState::onMouseDown(Editor* editor, MouseMessage* msg)
   // with a couple of Editors, in one is moving pixels and the other
   // one not.
   UIContext* ctx = UIContext::instance();
-  ctx->setActiveView(editor->getDocumentView());
+  ctx->setActiveView(editor->getDocView());
 
   ContextBar* contextBar = App::instance()->contextBar();
   contextBar->updateForMovingPixels();
@@ -255,7 +262,7 @@ bool MovingPixelsState::onMouseDown(Editor* editor, MouseMessage* msg)
   }
 
   Decorator* decorator = static_cast<Decorator*>(editor->decorator());
-  Document* document = editor->document();
+  Doc* document = editor->document();
 
   // Transform selected pixels
   if (document->isMaskVisible() &&
@@ -458,17 +465,22 @@ bool MovingPixelsState::onUpdateStatusBar(Editor* editor)
   const Transformation& transform(getTransformation(editor));
   gfx::Size imageSize = m_pixelsMovement->getInitialImageSize();
 
+  int w = int(transform.bounds().w);
+  int h = int(transform.bounds().h);
+  int gcd = base::gcd(w, h);
   StatusBar::instance()->setStatusText
-    (100, ":pos: %d %d :size: %3d %3d :selsize: %d %d [%.02f%% %.02f%%] :angle: %.1f",
+    (100, ":pos: %d %d :size: %3d %3d :selsize: %d %d [%.02f%% %.02f%%] :angle: %.1f :aspect_ratio: %d:%d",
      int(transform.bounds().x),
      int(transform.bounds().y),
      imageSize.w,
      imageSize.h,
-     int(transform.bounds().w),
-     int(transform.bounds().h),
-     (double)transform.bounds().w*100.0/imageSize.w,
-     (double)transform.bounds().h*100.0/imageSize.h,
-     180.0 * transform.angle() / PI);
+     w,
+     h,
+     (double)w*100.0/imageSize.w,
+     (double)h*100.0/imageSize.h,
+     180.0 * transform.angle() / PI,
+     w/gcd,
+     h/gcd);
 
   return true;
 }
@@ -495,9 +507,18 @@ void MovingPixelsState::onBeforeCommandExecution(CommandExecutionEvent& ev)
     return;
 
   // We don't need to drop the pixels if a MoveMaskCommand of Content is executed.
-  if (MoveMaskCommand* moveMaskCmd = dynamic_cast<MoveMaskCommand*>(ev.command())) {
+  if (MoveMaskCommand* moveMaskCmd = dynamic_cast<MoveMaskCommand*>(command)) {
     if (moveMaskCmd->getTarget() == MoveMaskCommand::Content) {
-      // Do not drop pixels
+      gfx::Point delta = moveMaskCmd->getMoveThing().getDelta(UIContext::instance());
+      // Verify Shift condition of the MoveMaskCommand (i.e. wrap = true)
+      if (moveMaskCmd->isWrap()) {
+        m_pixelsMovement->shift(delta.x, delta.y);
+      }
+      else {
+        translate(delta);
+      }
+      // We've processed the selection content movement right here.
+      ev.cancel();
       return;
     }
   }
@@ -518,9 +539,9 @@ void MovingPixelsState::onBeforeCommandExecution(CommandExecutionEvent& ev)
            command->id() == CommandId::Clear()) {
     // Copy the floating image to the clipboard on Cut/Copy.
     if (command->id() != CommandId::Clear()) {
-      Document* document = m_editor->document();
-      base::UniquePtr<Image> floatingImage;
-      base::UniquePtr<Mask> floatingMask;
+      Doc* document = m_editor->document();
+      std::unique_ptr<Image> floatingImage;
+      std::unique_ptr<Mask> floatingMask;
       m_pixelsMovement->getDraggedImageCopy(floatingImage, floatingMask);
 
       clipboard::copy_image(floatingImage.get(),
@@ -646,7 +667,7 @@ void MovingPixelsState::setTransparentColor(bool opaque, const app::Color& color
     m_pixelsMovement->setMaskColor(
       opaque, color_utils::color_for_target_mask(color, ColorTarget(layer)));
   }
-  catch (const LockedDocumentException& ex) {
+  catch (const LockedDocException& ex) {
     Console::showException(ex);
   }
 }
@@ -672,7 +693,7 @@ Transformation MovingPixelsState::getTransformation(Editor* editor)
 
 bool MovingPixelsState::isActiveDocument() const
 {
-  Document* doc = UIContext::instance()->activeDocument();
+  Doc* doc = UIContext::instance()->activeDocument();
   return (m_editor->document() == doc);
 }
 

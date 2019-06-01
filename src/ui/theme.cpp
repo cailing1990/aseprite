@@ -1,4 +1,5 @@
 // Aseprite UI Library
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -12,9 +13,9 @@
 
 #include "gfx/point.h"
 #include "gfx/size.h"
-#include "she/font.h"
-#include "she/surface.h"
-#include "she/system.h"
+#include "os/font.h"
+#include "os/surface.h"
+#include "os/system.h"
 #include "ui/intern.h"
 #include "ui/manager.h"
 #include "ui/paint_event.h"
@@ -79,7 +80,7 @@ void for_each_layer(const Widget* widget,
 }
 
 std::function<void(int srcx, int srcy, int dstx, int dsty, int w, int h)>
-getDrawSurfaceFunction(Graphics* g, she::Surface* sheet, gfx::Color color)
+getDrawSurfaceFunction(Graphics* g, os::Surface* sheet, gfx::Color color)
 {
   if (color != gfx::ColorNone)
     return [g, sheet, color](int srcx, int srcy, int dstx, int dsty, int w, int h) {
@@ -399,7 +400,7 @@ void Theme::paintLayer(Graphics* g,
 
     case Style::Layer::Type::kText:
       if (layer.color() != gfx::ColorNone) {
-        she::Font* oldFont = g->font();
+        os::Font* oldFont = g->font();
         if (style->font())
           g->setFont(style->font());
 
@@ -444,7 +445,7 @@ void Theme::paintLayer(Graphics* g,
       break;
 
     case Style::Layer::Type::kIcon: {
-      she::Surface* icon = layer.icon();
+      os::Surface* icon = layer.icon();
       if (icon) {
         gfx::Size iconSize(icon->width(), icon->height());
         gfx::Point pt;
@@ -514,7 +515,7 @@ void Theme::measureLayer(const Widget* widget,
 
     case Style::Layer::Type::kText:
       if (layer.color() != gfx::ColorNone) {
-        she::Font* font = (style->font() ? style->font(): widget->font());
+        os::Font* font = (style->font() ? style->font(): widget->font());
         gfx::Size textSize(Graphics::measureUITextLength(widget->text(), font),
                            font->height());
 
@@ -525,7 +526,7 @@ void Theme::measureLayer(const Widget* widget,
       break;
 
     case Style::Layer::Type::kIcon: {
-      she::Surface* icon = layer.icon();
+      os::Surface* icon = layer.icon();
       if (icon) {
         iconHint.w = std::max(iconHint.w, icon->width()+ABS(layer.offset().x));
         iconHint.h = std::max(iconHint.h, icon->height()+ABS(layer.offset().y));
@@ -688,81 +689,18 @@ int details::old_guiscale()
 }
 
 // static
-void Theme::drawSlices(Graphics* g, she::Surface* sheet,
+void Theme::drawSlices(Graphics* g, os::Surface* sheet,
                        const gfx::Rect& rc,
                        const gfx::Rect& sprite,
                        const gfx::Rect& slices,
                        const gfx::Color color,
                        const bool drawCenter)
 {
-  const int w1 = slices.x;
-  const int h1 = slices.y;
-  const int w2 = slices.w;
-  const int h2 = slices.h;
-  const int w3 = sprite.w-w1-w2;
-  const int h3 = sprite.h-h1-h2;
-  const int x2 = rc.x2()-w3;
-  const int y2 = rc.y2()-h3;
-  auto draw = getDrawSurfaceFunction(g, sheet, color);
-
-  // Top
-  int x = rc.x;
-  int y = rc.y;
-  draw(sprite.x, sprite.y,
-       x, y, w1, h1);
-  {
-    IntersectClip clip(g, gfx::Rect(rc.x+w1, rc.y, rc.w-w1-w3, h1));
-    if (clip) {
-      for (x+=w1; x<x2; x+=w2) {
-        draw(sprite.x+w1, sprite.y,
-             x, y, w2, h1);
-      }
-    }
-  }
-  draw(sprite.x+w1+w2, sprite.y,
-       x2, y, w3, h1);
-
-  // Bottom
-  x = rc.x;
-  y = y2;
-  draw(sprite.x, sprite.y+h1+h2,
-       x, y, w1, h3);
-  {
-    IntersectClip clip(g, gfx::Rect(rc.x+w1, y2, rc.w-w1-w3, h3));
-    if (clip) {
-      for (x+=w1; x<x2; x+=w2) {
-        draw(sprite.x+w1, sprite.y+h1+h2,
-             x, y2, w2, h3);
-      }
-    }
-  }
-  draw(sprite.x+w1+w2, sprite.y+h1+h2,
-       x2, y2, w3, h3);
-
-  // Left & Right
-  IntersectClip clip(g, gfx::Rect(rc.x, rc.y+h1, rc.w, rc.h-h1-h3));
-  if (clip) {
-    for (y=rc.y+h1; y<y2; y+=h2) {
-      // Left
-      draw(sprite.x, sprite.y+h1,
-           rc.x, y, w1, h2);
-      // Right
-      draw(sprite.x+w1+w2, sprite.y+h1,
-           x2, y, w3, h2);
-    }
-  }
-
-  // Center
-  if (drawCenter) {
-    IntersectClip clip(g, gfx::Rect(rc.x+w1, rc.y+h1, rc.w-w1-w3, rc.h-h1-h3));
-    if (clip) {
-      for (y=rc.y+h1; y<y2; y+=h2) {
-        for (x=rc.x+w1; x<x2; x+=w2)
-          draw(sprite.x+w1, sprite.y+h1,
-               x, y, w2, h2);
-      }
-    }
-  }
+  Paint paint;
+  paint.color(color);
+  if (!drawCenter)
+    paint.setFlags(Paint::kNineWithoutCenter);
+  g->drawSurfaceNine(sheet, sprite, slices, rc, &paint);
 }
 
 // static
@@ -776,7 +714,7 @@ void Theme::drawTextBox(Graphics* g, Widget* widget,
   int x, y, chr, len;
   gfx::Point scroll;
   int textheight = widget->textHeight();
-  she::Font* font = widget->font();
+  os::Font* font = widget->font();
   char *beg_end, *old_end;
   int width;
   gfx::Rect vp;

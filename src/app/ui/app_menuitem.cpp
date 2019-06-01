@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2017  David Capello
 //
 // This program is distributed under the terms of
@@ -16,7 +17,7 @@
 #include "app/modules/gui.h"
 #include "app/ui/keyboard_shortcuts.h"
 #include "app/ui_context.h"
-#include "she/menus.h"
+#include "os/menus.h"
 #include "ui/accelerator.h"
 #include "ui/menu.h"
 #include "ui/message.h"
@@ -35,21 +36,27 @@ using namespace ui;
 Params AppMenuItem::s_contextParams;
 
 AppMenuItem::AppMenuItem(const std::string& text,
-                         Command* command, const Params& params)
+                         Command* command,
+                         const Params& params)
  : MenuItem(text)
  , m_key(nullptr)
  , m_command(command)
  , m_params(params)
+ , m_isRecentFileItem(false)
  , m_native(nullptr)
 {
 }
 
 AppMenuItem::~AppMenuItem()
 {
-  delete m_native;
+  if (m_native) {
+    if (m_native->menuItem)
+      m_native->menuItem->dispose();
+    delete m_native;
+  }
 }
 
-void AppMenuItem::setKey(Key* key)
+void AppMenuItem::setKey(const KeyPtr& key)
 {
   m_key = key;
   syncNativeMenuItemKeyShortcut();
@@ -59,14 +66,17 @@ void AppMenuItem::setNative(const Native& native)
 {
   if (!m_native)
     m_native = new Native(native);
-  else
+  else {
+    if (m_native->menuItem)
+      m_native->menuItem->dispose();
     *m_native = native;
+  }
 }
 
 void AppMenuItem::syncNativeMenuItemKeyShortcut()
 {
   if (m_native) {
-    she::Shortcut shortcut = get_os_shortcut_from_key(m_key);
+    os::Shortcut shortcut = get_os_shortcut_from_key(m_key.get());
 
     m_native->shortcut = shortcut;
     m_native->menuItem->setShortcut(shortcut);

@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2016-2017  David Capello
 //
 // This program is distributed under the terms of
@@ -10,7 +11,7 @@
 
 #include "app/cli/cli_open_file.h"
 
-#include "app/document.h"
+#include "app/doc.h"
 #include "app/file/file.h"
 #include "doc/frame_tag.h"
 #include "doc/frame_tags.h"
@@ -32,6 +33,7 @@ CliOpenFile::CliOpenFile()
   listSlices = false;
   ignoreEmpty = false;
   trim = false;
+  trimByGrid = false;
   oneFrame = false;
   crop = gfx::Rect();
 }

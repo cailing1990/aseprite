@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -13,9 +13,9 @@
 #include "app/app.h"
 #include "app/cmd/set_cel_bounds.h"
 #include "app/context_access.h"
-#include "app/document_api.h"
-#include "app/document_range.h"
-#include "app/transaction.h"
+#include "app/doc_api.h"
+#include "app/doc_range.h"
+#include "app/tx.h"
 #include "app/ui/editor/editor.h"
 #include "app/ui/editor/editor_customization_delegate.h"
 #include "app/ui/main_window.h"
@@ -43,13 +43,13 @@ MovingCelCollect::MovingCelCollect(Editor* editor, Layer* layer)
   if (layer && layer->isImage())
     m_mainCel = layer->cel(editor->frame());
 
-  DocumentRange range = App::instance()->timeline()->range();
+  DocRange range = App::instance()->timeline()->range();
   if (!range.enabled()) {
-    range.startRange(editor->layer(), editor->frame(), DocumentRange::kCels);
+    range.startRange(editor->layer(), editor->frame(), DocRange::kCels);
     range.endRange(editor->layer(), editor->frame());
   }
 
-  DocumentRange range2 = range;
+  DocRange range2 = range;
   for (Layer* layer : range.selectedLayers()) {
     if (layer && layer->isGroup()) {
       LayerList childrenList;
@@ -87,7 +87,7 @@ MovingCelState::MovingCelState(Editor* editor,
   , m_handle(handle)
 {
   ContextWriter writer(m_reader, 500);
-  Document* document = editor->document();
+  Doc* document = editor->document();
   ASSERT(!m_celList.empty());
 
   m_cel = collect.mainCel();
@@ -122,7 +122,7 @@ MovingCelState::MovingCelState(Editor* editor,
 
 bool MovingCelState::onMouseUp(Editor* editor, MouseMessage* msg)
 {
-  Document* document = editor->document();
+  Doc* document = editor->document();
   bool modified = false;
 
   // Here we put back all cels into their original coordinates (so we
@@ -148,8 +148,8 @@ bool MovingCelState::onMouseUp(Editor* editor, MouseMessage* msg)
   if (modified) {
     {
       ContextWriter writer(m_reader, 1000);
-      Transaction transaction(writer.context(), "Cel Movement", ModifyDocument);
-      DocumentApi api = document->getApi(transaction);
+      Tx tx(writer.context(), "Cel Movement", ModifyDocument);
+      DocApi api = document->getApi(tx);
       gfx::Point intOffset = intCelOffset();
 
       // And now we move the cel (or all selected range) to the new position.
@@ -163,7 +163,7 @@ bool MovingCelState::onMouseUp(Editor* editor, MouseMessage* msg)
             celBounds.w *= m_celScale.w;
             celBounds.h *= m_celScale.h;
           }
-          transaction.execute(new cmd::SetCelBoundsF(cel, celBounds));
+          tx(new cmd::SetCelBoundsF(cel, celBounds));
         }
         else {
           api.setCelPosition(writer.sprite(), cel,
@@ -178,12 +178,12 @@ bool MovingCelState::onMouseUp(Editor* editor, MouseMessage* msg)
         //      m_celOffset=(0.5,0.5)) will not move the final
         //      position of the mask (so the ref layer is moved and
         //      the mask isn't).
-        
+
         api.setMaskPosition(document->mask()->bounds().x + intOffset.x,
                             document->mask()->bounds().y + intOffset.y);
       }
 
-      transaction.commit();
+      tx.commit();
     }
 
     // Redraw all editors. We've to notify all views about this

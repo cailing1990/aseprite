@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2015  David Capello
 //
 // This program is distributed under the terms of
@@ -10,7 +11,7 @@
 
 #include "app/cmd/flip_mask.h"
 
-#include "app/document.h"
+#include "app/doc.h"
 #include "doc/algorithm/flip_image.h"
 #include "doc/mask.h"
 
@@ -19,7 +20,7 @@ namespace cmd {
 
 using namespace doc;
 
-FlipMask::FlipMask(Document* doc, doc::algorithm::FlipType flipType)
+FlipMask::FlipMask(Doc* doc, doc::algorithm::FlipType flipType)
   : WithDocument(doc)
   , m_flipType(flipType)
 {
@@ -37,8 +38,8 @@ void FlipMask::onUndo()
 
 void FlipMask::swap()
 {
-  Document* document = this->document();
-  Mask* mask = document->mask();
+  Doc* doc = this->document();
+  Mask* mask = doc->mask();
 
   ASSERT(mask->bitmap());
   if (!mask->bitmap())
@@ -48,6 +49,8 @@ void FlipMask::swap()
   doc::algorithm::flip_image(mask->bitmap(),
     mask->bitmap()->bounds(), m_flipType);
   mask->unfreeze();
+
+  doc->notifySelectionChanged();
 }
 
 } // namespace cmd

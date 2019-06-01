@@ -1,5 +1,6 @@
 // Aseprite UI Library
-// Copyright (C) 2001-2013, 2015, 2016  David Capello
+// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2001-2016  David Capello
 //
 // This file is released under the terms of the MIT license.
 // Read LICENSE.txt for more information.
@@ -10,8 +11,8 @@
 
 #include "ui/overlay_manager.h"
 
-#include "she/display.h"
-#include "she/surface.h"
+#include "os/display.h"
+#include "os/surface.h"
 #include "ui/manager.h"
 #include "ui/overlay.h"
 
@@ -53,46 +54,46 @@ void OverlayManager::addOverlay(Overlay* overlay)
 
 void OverlayManager::removeOverlay(Overlay* overlay)
 {
+  if (overlay)
+    overlay->restoreOverlappedArea(gfx::Rect());
+
   iterator it = std::find(begin(), end(), overlay);
   ASSERT(it != end());
   if (it != end())
     m_overlays.erase(it);
 }
 
-void OverlayManager::captureOverlappedAreas()
+void OverlayManager::restoreOverlappedAreas(const gfx::Rect& restoreBounds)
 {
+  if (m_overlays.empty())
+    return;
+
+  // TODO can we remove this?
   Manager* manager = Manager::getDefault();
   if (!manager)
     return;
 
-  she::Surface* displaySurface = manager->getDisplay()->getSurface();
-  she::SurfaceLock lock(displaySurface);
   for (Overlay* overlay : *this)
-    overlay->captureOverlappedArea(displaySurface);
-}
-
-void OverlayManager::restoreOverlappedAreas()
-{
-  Manager* manager = Manager::getDefault();
-  if (!manager)
-    return;
-
-  she::Surface* displaySurface = manager->getDisplay()->getSurface();
-  she::SurfaceLock lock(displaySurface);
-  for (Overlay* overlay : *this)
-    overlay->restoreOverlappedArea(displaySurface);
+    overlay->restoreOverlappedArea(restoreBounds);
 }
 
 void OverlayManager::drawOverlays()
 {
+  if (m_overlays.empty())
+    return;
+
   Manager* manager = Manager::getDefault();
   if (!manager)
     return;
 
-  she::Surface* displaySurface = manager->getDisplay()->getSurface();
-  she::SurfaceLock lock(displaySurface);
+  os::Surface* displaySurface = manager->getDisplay()->getSurface();
+  os::SurfaceLock lock(displaySurface);
+
   for (Overlay* overlay : *this)
-    overlay->drawOverlay(displaySurface);
+    overlay->captureOverlappedArea(displaySurface);
+
+  for (Overlay* overlay : *this)
+    overlay->drawOverlay();
 }
 
 } // namespace ui

@@ -9,18 +9,18 @@
 #pragma once
 
 #include "app/commands/filters/cels_target.h"
+#include "app/site.h"
 #include "base/exception.h"
-#include "base/unique_ptr.h"
 #include "doc/image_impl.h"
 #include "doc/image_ref.h"
 #include "doc/pixel_format.h"
-#include "doc/site.h"
 #include "filters/filter_indexed_data.h"
 #include "filters/filter_manager.h"
 #include "gfx/rect.h"
 
 #include <cstring>
 #include <memory>
+#include <vector>
 
 namespace doc {
   class Cel;
@@ -36,7 +36,8 @@ namespace filters {
 
 namespace app {
   class Context;
-  class Document;
+  class Doc;
+  class Editor;
   class Transaction;
 
   using namespace filters;
@@ -88,7 +89,7 @@ namespace app {
     bool isTransaction() const;
     void commitTransaction();
 
-    app::Document* document();
+    Doc* document();
     doc::Sprite* sprite() { return m_site.sprite(); }
     doc::Layer* layer() { return m_site.layer(); }
     doc::frame_t frame() { return m_site.frame(); }
@@ -132,7 +133,7 @@ namespace app {
     void redrawColorPalette();
 
     Context* m_context;
-    doc::Site m_site;
+    Site m_site;
     Filter* m_filter;
     doc::Cel* m_cel;
     doc::ImageRef m_src;
@@ -141,13 +142,13 @@ namespace app {
     int m_nextRowToFlush;
     gfx::Rect m_bounds;
     doc::Mask* m_mask;
-    base::UniquePtr<doc::Mask> m_previewMask;
+    std::unique_ptr<doc::Mask> m_previewMask;
     doc::ImageBits<doc::BitmapTraits> m_maskBits;
     doc::ImageBits<doc::BitmapTraits>::iterator m_maskIterator;
     Target m_targetOrig;          // Original targets
     Target m_target;              // Filtered targets
     CelsTarget m_celsTarget;
-    base::UniquePtr<doc::Palette> m_oldPalette;
+    std::unique_ptr<doc::Palette> m_oldPalette;
     std::unique_ptr<Transaction> m_transaction;
 
     // Hooks

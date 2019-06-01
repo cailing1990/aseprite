@@ -16,15 +16,16 @@
 #include "app/cmd/set_palette.h"
 #include "app/cmd/unlink_cel.h"
 #include "app/context_access.h"
-#include "app/document.h"
+#include "app/doc.h"
 #include "app/ini_file.h"
-#include "app/modules/editors.h"
 #include "app/modules/palettes.h"
+#include "app/site.h"
 #include "app/transaction.h"
 #include "app/ui/color_bar.h"
 #include "app/ui/editor/editor.h"
 #include "app/ui/palette_view.h"
 #include "app/ui/timeline/timeline.h"
+#include "app/ui_context.h"
 #include "app/util/range_utils.h"
 #include "doc/algorithm/shrink_bounds.h"
 #include "doc/cel.h"
@@ -32,7 +33,6 @@
 #include "doc/image.h"
 #include "doc/layer.h"
 #include "doc/mask.h"
-#include "doc/site.h"
 #include "doc/sprite.h"
 #include "filters/filter.h"
 #include "ui/manager.h"
@@ -82,9 +82,9 @@ FilterManagerImpl::~FilterManagerImpl()
   }
 }
 
-app::Document* FilterManagerImpl::document()
+Doc* FilterManagerImpl::document()
 {
-  return static_cast<app::Document*>(m_site.document());
+  return static_cast<Doc*>(m_site.document());
 }
 
 void FilterManagerImpl::setProgressDelegate(IProgressDelegate* progressDelegate)
@@ -115,7 +115,7 @@ void FilterManagerImpl::setCelsTarget(CelsTarget celsTarget)
 
 void FilterManagerImpl::begin()
 {
-  Document* document = static_cast<app::Document*>(m_site.document());
+  Doc* document = m_site.document();
 
   m_row = 0;
   m_mask = (document->isMaskVisible() ? document->mask(): nullptr);
@@ -124,7 +124,7 @@ void FilterManagerImpl::begin()
 
 void FilterManagerImpl::beginForPreview()
 {
-  Document* document = static_cast<app::Document*>(m_site.document());
+  Doc* document = m_site.document();
 
   if (document->isMaskVisible())
     m_previewMask.reset(new Mask(*document->mask()));
@@ -134,22 +134,22 @@ void FilterManagerImpl::beginForPreview()
   }
 
   m_row = m_nextRowToFlush = 0;
-  m_mask = m_previewMask;
+  m_mask = m_previewMask.get();
 
-  Editor* editor = current_editor;
   // If we have a tiled mode enabled, we'll apply the filter to the whole areaes
-  if (editor->docPref().tiled.mode() == filters::TiledMode::NONE) {
-    Sprite* sprite = m_site.sprite();
-    gfx::Rect vp = View::getView(editor)->viewportBounds();
-    vp = editor->screenToEditor(vp);
-    vp = vp.createIntersection(sprite->bounds());
-
+  Editor* activeEditor = UIContext::instance()->activeEditor();
+  if (activeEditor->docPref().tiled.mode() == filters::TiledMode::NONE) {
+    gfx::Rect vp;
+    for (Editor* editor : UIContext::instance()->getAllEditorsIncludingPreview(document)) {
+      vp |= editor->screenToEditor(
+        View::getView(editor)->viewportBounds());
+    }
+    vp &= m_site.sprite()->bounds();
     if (vp.isEmpty()) {
       m_previewMask.reset(nullptr);
       m_row = -1;
       return;
     }
-
     m_previewMask->intersect(vp);
   }
 
@@ -336,41 +336,43 @@ void FilterManagerImpl::flush()
   int h = m_row - m_nextRowToFlush;
 
   if (m_row >= 0 && h > 0) {
-    Editor* editor = current_editor;
-
     // Redraw the color palette
     if (m_nextRowToFlush == 0 && paletteHasChanged())
       redrawColorPalette();
 
-    // We expand the region one pixel at the top and bottom of the
-    // region [m_row,m_nextRowToFlush) to be updated on the screen to
-    // avoid screen artifacts when we apply filters like convolution
-    // matrices.
-    gfx::Rect rect(
-      editor->editorToScreen(
-        gfx::Point(
-          m_bounds.x,
-          m_bounds.y+m_nextRowToFlush-1)),
-      gfx::Size(
-        editor->projection().applyX(m_bounds.w),
-        (editor->projection().scaleY() >= 1 ? editor->projection().applyY(h+2):
-                                              editor->projection().removeY(h+2))));
+    for (Editor* editor : UIContext::instance()->getAllEditorsIncludingPreview(document())) {
+      // We expand the region one pixel at the top and bottom of the
+      // region [m_row,m_nextRowToFlush) to be updated on the screen to
+      // avoid screen artifacts when we apply filters like convolution
+      // matrices.
+      gfx::Rect rect(
+        editor->editorToScreen(
+          gfx::Point(
+            m_bounds.x,
+            m_bounds.y+m_nextRowToFlush-1)),
+        gfx::Size(
+          editor->projection().applyX(m_bounds.w),
+          (editor->projection().scaleY() >= 1 ? editor->projection().applyY(h+2):
+                                                editor->projection().removeY(h+2))));
 
-    gfx::Region reg1(rect);
-    editor->expandRegionByTiledMode(reg1, true);
+      gfx::Region reg1(rect);
+      editor->expandRegionByTiledMode(reg1, true);
 
-    gfx::Region reg2;
-    editor->getDrawableRegion(reg2, Widget::kCutTopWindows);
-    reg1.createIntersection(reg1, reg2);
+      gfx::Region reg2;
+      editor->getDrawableRegion(reg2, Widget::kCutTopWindows);
+      reg1.createIntersection(reg1, reg2);
 
-    editor->invalidateRegion(reg1);
+      editor->invalidateRegion(reg1);
+    }
+
     m_nextRowToFlush = m_row+1;
   }
 }
 
 void FilterManagerImpl::disablePreview()
 {
-  current_editor->invalidate();
+  for (Editor* editor : UIContext::instance()->getAllEditorsIncludingPreview(document()))
+    editor->invalidate();
 
   // Redraw the color bar in case the filter modified the palette.
   if (paletteHasChanged()) {
@@ -436,7 +438,7 @@ void FilterManagerImpl::init(Cel* cel)
 {
   ASSERT(cel);
 
-  Document* doc = static_cast<app::Document*>(m_site.document());
+  Doc* doc = m_site.document();
   if (!updateBounds(doc->isMaskVisible() ? doc->mask(): nullptr))
     throw InvalidAreaException();
 
@@ -500,8 +502,7 @@ void FilterManagerImpl::redrawColorPalette()
 
 bool FilterManagerImpl::isMaskActive() const
 {
-  return static_cast<const app::Document*>(m_site.document())
-    ->isMaskVisible();
+  return m_site.document()->isMaskVisible();
 }
 
 } // namespace app

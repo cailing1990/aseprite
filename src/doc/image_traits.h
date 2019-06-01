@@ -1,4 +1,5 @@
 // Aseprite Document Library
+// Copyright (c) 2018-2019 Igara Studio S.A.
 // Copyright (c) 2001-2015 David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -9,11 +10,14 @@
 #pragma once
 
 #include "doc/blend_funcs.h"
+#include "doc/color.h"
+#include "doc/color_mode.h"
 #include "doc/pixel_format.h"
 
 namespace doc {
 
   struct RgbTraits {
+    static const ColorMode color_mode = ColorMode::RGB;
     static const PixelFormat pixel_format = IMAGE_RGB;
 
     enum {
@@ -35,12 +39,26 @@ namespace doc {
       return bytes_per_pixel * pixels_per_row;
     }
 
-    static inline BlendFunc get_blender(BlendMode blend_mode) {
-      return get_rgba_blender(blend_mode);
+    static inline BlendFunc get_blender(BlendMode blend_mode, bool newBlend) {
+      return get_rgba_blender(blend_mode, newBlend);
+    }
+
+    static inline bool same_color(const pixel_t a, const pixel_t b) {
+      if (rgba_geta(a) == 0) {
+        if (rgba_geta(b) == 0)
+          return true;
+        else
+          return false;
+      }
+      else if (rgba_geta(b) == 0)
+        return false;
+      else
+        return a == b;
     }
   };
 
   struct GrayscaleTraits {
+    static const ColorMode color_mode = ColorMode::GRAYSCALE;
     static const PixelFormat pixel_format = IMAGE_GRAYSCALE;
 
     enum {
@@ -62,12 +80,26 @@ namespace doc {
       return bytes_per_pixel * pixels_per_row;
     }
 
-    static inline BlendFunc get_blender(BlendMode blend_mode) {
-      return get_graya_blender(blend_mode);
+    static inline BlendFunc get_blender(BlendMode blend_mode, bool newBlend) {
+      return get_graya_blender(blend_mode, newBlend);
+    }
+
+    static inline bool same_color(const pixel_t a, const pixel_t b) {
+      if (graya_geta(a) == 0) {
+        if (graya_geta(b) == 0)
+          return true;
+        else
+          return false;
+      }
+      else if (graya_geta(b) == 0)
+        return false;
+      else
+        return a == b;
     }
   };
 
   struct IndexedTraits {
+    static const ColorMode color_mode = ColorMode::INDEXED;
     static const PixelFormat pixel_format = IMAGE_INDEXED;
 
     enum {
@@ -89,12 +121,17 @@ namespace doc {
       return bytes_per_pixel * pixels_per_row;
     }
 
-    static inline BlendFunc get_blender(BlendMode blend_mode) {
-      return get_indexed_blender(blend_mode);
+    static inline BlendFunc get_blender(BlendMode blend_mode, bool newBlend) {
+      return get_indexed_blender(blend_mode, newBlend);
+    }
+
+    static inline bool same_color(const pixel_t a, const pixel_t b) {
+      return a == b;
     }
   };
 
   struct BitmapTraits {
+    static const ColorMode color_mode = ColorMode::BITMAP;
     static const PixelFormat pixel_format = IMAGE_BITMAP;
 
     enum {
@@ -114,6 +151,10 @@ namespace doc {
 
     static inline int getRowStrideBytes(int pixels_per_row) {
       return ((pixels_per_row+7) / 8);
+    }
+
+    static inline bool same_color(const pixel_t a, const pixel_t b) {
+      return a == b;
     }
   };
 

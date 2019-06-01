@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -11,16 +11,15 @@
 #include "app/app.h"
 #include "app/commands/command.h"
 #include "app/context_access.h"
+#include "app/doc_range_ops.h"
 #include "app/modules/gui.h"
 #include "app/ui/timeline/timeline.h"
-#include "app/document_range_ops.h"
 
 namespace app {
 
 class ReverseFramesCommand : public Command {
 public:
   ReverseFramesCommand();
-  Command* clone() const override { return new ReverseFramesCommand(*this); }
 
 protected:
   bool onEnabled(Context* context) override;
@@ -47,7 +46,7 @@ void ReverseFramesCommand::onExecute(Context* context)
   if (!range.enabled())
     return;                     // Nothing to do
 
-  Document* doc = context->activeDocument();
+  Doc* doc = context->activeDocument();
 
   reverse_frames(doc, range);
 

@@ -13,13 +13,12 @@
 #include "app/commands/cmd_sprite_size.h"
 #include "app/commands/command.h"
 #include "app/commands/params.h"
-#include "app/document_api.h"
+#include "app/doc_api.h"
 #include "app/ini_file.h"
 #include "app/modules/gui.h"
 #include "app/modules/palettes.h"
 #include "app/sprite_job.h"
 #include "base/bind.h"
-#include "base/unique_ptr.h"
 #include "doc/algorithm/resize_image.h"
 #include "doc/cel.h"
 #include "doc/cels_range.h"
@@ -73,7 +72,7 @@ protected:
 
   // [working thread]
   void onJob() override {
-    DocumentApi api = writer().document()->getApi(transaction());
+    DocApi api = writer().document()->getApi(tx());
 
     int cels_count = 0;
     for (Cel* cel : sprite()->uniqueCels()) { // TODO add size() member function to CelsRange
@@ -90,7 +89,7 @@ protected:
         // Resize the cel bounds only if it's from a reference layer
         if (cel->layer()->isReference()) {
           gfx::RectF newBounds = scale_rect<double>(cel->boundsF());
-          transaction().execute(new cmd::SetCelBoundsF(cel, newBounds));
+          tx()(new cmd::SetCelBoundsF(cel, newBounds));
         }
         else {
           // Change its location
@@ -119,7 +118,7 @@ protected:
 
       // Cancel all the operation?
       if (isCanceled())
-        return;        // Transaction destructor will undo all operations
+        return;        // Tx destructor will undo all operations
     }
 
     // Resize mask
@@ -131,7 +130,7 @@ protected:
 
       int w = scale_x(old_bitmap->width());
       int h = scale_y(old_bitmap->height());
-      base::UniquePtr<Mask> new_mask(new Mask);
+      std::unique_ptr<Mask> new_mask(new Mask);
       new_mask->replace(
         gfx::Rect(
           scale_x(document()->mask()->bounds().x-1),
@@ -147,7 +146,7 @@ protected:
       new_mask->intersect(new_mask->bounds());
 
       // Copy new mask
-      api.copyToCurrentMask(new_mask);
+      api.copyToCurrentMask(new_mask.get());
 
       // Regenerate mask
       document()->resetTransformation();
@@ -171,8 +170,7 @@ protected:
           newKey.setPivot(gfx::Point(scale_x(newKey.pivot().x),
                                      scale_y(newKey.pivot().y)));
 
-        transaction().execute(
-          new cmd::SetSliceKey(slice, k.frame(), newKey));
+        tx()(new cmd::SetSliceKey(slice, k.frame(), newKey));
       }
     }
 
@@ -279,11 +277,6 @@ SpriteSizeCommand::SpriteSizeCommand()
   m_scaleX = 1.0;
   m_scaleY = 1.0;
   m_resizeMethod = doc::algorithm::RESIZE_METHOD_NEAREST_NEIGHBOR;
-}
-
-Command* SpriteSizeCommand::clone() const
-{
-  return new SpriteSizeCommand(*this);
 }
 
 void SpriteSizeCommand::onLoadParams(const Params& params)

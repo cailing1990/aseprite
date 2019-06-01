@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -9,11 +10,12 @@
 #endif
 
 #include "app/app.h"
-#include "app/document.h"
+#include "app/doc.h"
 #include "app/modules/editors.h"
 #include "app/pref/preferences.h"
+#include "app/site.h"
 #include "app/ui/color_bar.h"
-#include "app/ui/document_view.h"
+#include "app/ui/doc_view.h"
 #include "app/ui/editor/editor.h"
 #include "app/ui/input_chain.h"
 #include "app/ui/main_window.h"
@@ -24,8 +26,9 @@
 #include "app/ui/workspace_tabs.h"
 #include "app/ui_context.h"
 #include "base/mutex.h"
-#include "doc/site.h"
 #include "doc/sprite.h"
+
+#include <algorithm>
 
 namespace app {
 
@@ -58,7 +61,7 @@ bool UIContext::isUIAvailable() const
   return App::instance()->isGui();
 }
 
-DocumentView* UIContext::activeView() const
+DocView* UIContext::activeView() const
 {
   if (!isUIAvailable())
     return nullptr;
@@ -68,15 +71,21 @@ DocumentView* UIContext::activeView() const
     return nullptr;
 
   WorkspaceView* view = workspace->activeView();
-  if (DocumentView* docView = dynamic_cast<DocumentView*>(view))
+  if (DocView* docView = dynamic_cast<DocView*>(view))
     return docView;
   else
     return nullptr;
 }
 
-void UIContext::setActiveView(DocumentView* docView)
+void UIContext::setActiveView(DocView* docView)
 {
   MainWindow* mainWin = App::instance()->mainWindow();
+
+  // This can happen when the main window is being destroyed when we
+  // close the app, and the active view is changing because we are
+  // closing down every single tab.
+  if (!mainWin)
+    return;
 
   // Prioritize workspace for user input.
   App::instance()->inputChain().prioritize(mainWin->getWorkspace(), nullptr);
@@ -120,12 +129,12 @@ void UIContext::setActiveView(DocumentView* docView)
   notifyActiveSiteChanged();
 }
 
-void UIContext::onSetActiveDocument(doc::Document* document)
+void UIContext::onSetActiveDocument(Doc* document)
 {
   bool notify = (lastSelectedDoc() != document);
   app::Context::onSetActiveDocument(document);
 
-  DocumentView* docView = getFirstDocumentView(document);
+  DocView* docView = getFirstDocView(document);
   if (docView) {     // The view can be null if we are in --batch mode
     setActiveView(docView);
     notify = false;
@@ -135,14 +144,34 @@ void UIContext::onSetActiveDocument(doc::Document* document)
     notifyActiveSiteChanged();
 }
 
-DocumentView* UIContext::getFirstDocumentView(doc::Document* document) const
+void UIContext::onSetActiveLayer(doc::Layer* layer)
+{
+  if (DocView* docView = activeView()) {
+    if (Editor* editor = docView->editor())
+      editor->setLayer(layer);
+  }
+  else if (!isUIAvailable())
+    Context::onSetActiveLayer(layer);
+}
+
+void UIContext::onSetActiveFrame(const doc::frame_t frame)
+{
+  if (DocView* docView = activeView()) {
+    if (Editor* editor = docView->editor())
+      editor->setFrame(frame);
+  }
+  else if (!isUIAvailable())
+    Context::onSetActiveFrame(frame);
+}
+
+DocView* UIContext::getFirstDocView(Doc* document) const
 {
   Workspace* workspace = App::instance()->workspace();
   if (!workspace) // Workspace (main window) can be null if we are in --batch mode
     return nullptr;
 
   for (WorkspaceView* view : *workspace) {
-    if (DocumentView* docView = dynamic_cast<DocumentView*>(view)) {
+    if (DocView* docView = dynamic_cast<DocView*>(view)) {
       if (docView->document() == document) {
         return docView;
       }
@@ -152,32 +181,62 @@ DocumentView* UIContext::getFirstDocumentView(doc::Document* document) const
   return nullptr;
 }
 
-DocumentViews UIContext::getAllDocumentViews(doc::Document* document) const
+DocViews UIContext::getAllDocViews(Doc* document) const
 {
-  Workspace* workspace = App::instance()->workspace();
-  DocumentViews docViews;
-
-  for (WorkspaceView* view : *workspace) {
-    if (DocumentView* docView = dynamic_cast<DocumentView*>(view)) {
-      if (docView->document() == document) {
-        docViews.push_back(docView);
+  DocViews docViews;
+  // The workspace can be nullptr when we are running in batch mode.
+  if (Workspace* workspace = App::instance()->workspace()) {
+    for (WorkspaceView* view : *workspace) {
+      if (DocView* docView = dynamic_cast<DocView*>(view)) {
+        if (docView->document() == document) {
+          docViews.push_back(docView);
+        }
       }
     }
   }
-
   return docViews;
+}
+
+Editors UIContext::getAllEditorsIncludingPreview(Doc* document) const
+{
+  std::vector<Editor*> editors;
+  for (DocView* docView : getAllDocViews(document)) {
+    if (docView->editor())
+      editors.push_back(docView->editor());
+  }
+
+  if (MainWindow* mainWin = App::instance()->mainWindow()) {
+    PreviewEditorWindow* previewWin = mainWin->getPreviewEditor();
+    if (previewWin) {
+      Editor* miniEditor = previewWin->previewEditor();
+      if (miniEditor && miniEditor->document() == document)
+        editors.push_back(miniEditor);
+    }
+  }
+  return editors;
 }
 
 Editor* UIContext::activeEditor()
 {
-  DocumentView* view = activeView();
+  DocView* view = activeView();
   if (view)
     return view->editor();
   else
     return NULL;
 }
 
-void UIContext::onAddDocument(doc::Document* doc)
+void UIContext::reopenClosedDoc(Doc* doc)
+{
+  auto it = std::find(m_closedDocs.begin(), m_closedDocs.end(), doc);
+  ASSERT(it != m_closedDocs.end());
+  if (it != m_closedDocs.end())
+    m_closedDocs.erase(it);
+
+  // Put the document in the context again.
+  doc->setContext(this);
+}
+
+void UIContext::onAddDocument(Doc* doc)
 {
   app::Context::onAddDocument(doc);
 
@@ -186,9 +245,9 @@ void UIContext::onAddDocument(doc::Document* doc)
     return;
 
   // Add a new view for this document
-  DocumentView* view = new DocumentView(
+  DocView* view = new DocView(
     lastSelectedDoc(),
-    DocumentView::Normal,
+    DocView::Normal,
     App::instance()->mainWindow()->getPreviewEditor());
 
   // Add a tab with the new view for the document
@@ -198,7 +257,7 @@ void UIContext::onAddDocument(doc::Document* doc)
   view->editor()->setDefaultScroll();
 }
 
-void UIContext::onRemoveDocument(doc::Document* doc)
+void UIContext::onRemoveDocument(Doc* doc)
 {
   app::Context::onRemoveDocument(doc);
 
@@ -206,7 +265,7 @@ void UIContext::onRemoveDocument(doc::Document* doc)
   if (isUIAvailable()) {
     Workspace* workspace = App::instance()->workspace();
 
-    for (DocumentView* docView : getAllDocumentViews(doc)) {
+    for (DocView* docView : getAllDocViews(doc)) {
       workspace->removeView(docView);
       delete docView;
     }
@@ -215,7 +274,7 @@ void UIContext::onRemoveDocument(doc::Document* doc)
 
 void UIContext::onGetActiveSite(Site* site) const
 {
-  DocumentView* view = activeView();
+  DocView* view = activeView();
   if (view) {
     view->getSite(site);
 
@@ -225,9 +284,9 @@ void UIContext::onGetActiveSite(Site* site) const
       if (timeline &&
           timeline->range().enabled()) {
         switch (timeline->range().type()) {
-          case DocumentRange::kCels:   site->focus(Site::InCels); break;
-          case DocumentRange::kFrames: site->focus(Site::InFrames); break;
-          case DocumentRange::kLayers: site->focus(Site::InLayers); break;
+          case DocRange::kCels:   site->focus(Site::InCels); break;
+          case DocRange::kFrames: site->focus(Site::InFrames); break;
+          case DocRange::kLayers: site->focus(Site::InLayers); break;
         }
         site->selectedLayers(timeline->selectedLayers());
         site->selectedFrames(timeline->selectedFrames());
@@ -247,6 +306,13 @@ void UIContext::onGetActiveSite(Site* site) const
   else if (!isUIAvailable()) {
     return app::Context::onGetActiveSite(site);
   }
+}
+
+void UIContext::onCloseDocument(Doc* doc)
+{
+  ASSERT(doc != nullptr);
+  ASSERT(doc->context() == nullptr);
+  m_closedDocs.insert(m_closedDocs.begin(), doc);
 }
 
 } // namespace app

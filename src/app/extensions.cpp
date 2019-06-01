@@ -18,7 +18,6 @@
 #include "base/file_handle.h"
 #include "base/fs.h"
 #include "base/fstream_path.h"
-#include "base/unique_ptr.h"
 #include "render/dithering_matrix.h"
 
 #include "archive.h"
@@ -327,8 +326,14 @@ void Extension::uninstallFiles(const std::string& path)
     base::remove_directory(dir);
   }
 
-  TRACE("EXT: Deleting file '%s'\n", infoFn.c_str());
-  base::delete_file(infoFn);
+  // Delete __info.json file if it does exist (e.g. maybe the
+  // "installedFiles" list included the __info.json so the file was
+  // already deleted, this can happen if the .json file was modified
+  // by hand/the user)
+  if (base::is_file(infoFn)) {
+    TRACE("EXT: Deleting file '%s'\n", infoFn.c_str());
+    base::delete_file(infoFn);
+  }
 
   TRACE("EXT: Deleting extension directory '%s'\n", path.c_str());
   base::remove_directory(path);
@@ -577,6 +582,14 @@ Extension* Extensions::installCompressedExtension(const std::string& zipFn,
 
       LOG("EXT: Original filename in zip <%s>...\n", fn.c_str());
 
+      // Do not install __info.json file if it's inside the .zip as
+      // some users are distirbuting extensions with the __info.json
+      // file inside.
+      if (base::string_to_lower(base::get_file_name(fn)) == kInfoJson) {
+        LOG("EXT: Ignoring <%s>...\n", fn.c_str());
+        continue;
+      }
+
       if (!info.commonPath.empty()) {
         // Check mismatch with package.json common path
         if (fn.compare(0, info.commonPath.size(), info.commonPath) != 0)
@@ -641,7 +654,7 @@ Extension* Extensions::loadExtension(const std::string& path,
 
   LOG("EXT: Extension '%s' loaded\n", name.c_str());
 
-  base::UniquePtr<Extension> extension(
+  std::unique_ptr<Extension> extension(
     new Extension(path,
                   name,
                   version,

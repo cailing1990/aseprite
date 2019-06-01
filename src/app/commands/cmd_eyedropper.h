@@ -12,24 +12,20 @@
 #include "app/commands/command.h"
 #include "gfx/point.h"
 
-namespace doc {
-  class Site;
-}
-
 namespace render {
   class Projection;
 }
 
 namespace app {
   class Editor;
+  class Site;
 
   class EyedropperCommand : public Command {
   public:
     EyedropperCommand();
-    Command* clone() const override { return new EyedropperCommand(*this); }
 
     // Returns the color in the given sprite pos.
-    void pickSample(const doc::Site& site,
+    void pickSample(const Site& site,
                     const gfx::PointF& pixelPos,
                     const render::Projection& proj,
                     app::Color& color);

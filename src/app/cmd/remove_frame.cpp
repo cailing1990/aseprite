@@ -11,9 +11,9 @@
 #include "app/cmd/remove_frame.h"
 
 #include "app/cmd/remove_cel.h"
+#include "app/doc.h"
+#include "app/doc_event.h"
 #include "doc/cels_range.h"
-#include "doc/document.h"
-#include "doc/document_event.h"
 #include "doc/sprite.h"
 
 namespace app {
@@ -35,7 +35,7 @@ RemoveFrame::RemoveFrame(Sprite* sprite, frame_t frame)
 void RemoveFrame::onExecute()
 {
   Sprite* sprite = this->sprite();
-  Document* doc = sprite->document();
+  Doc* doc = static_cast<Doc*>(sprite->document());
 
   if (m_firstTime) {
     m_firstTime = false;
@@ -55,16 +55,16 @@ void RemoveFrame::onExecute()
   m_frameRemoved = (oldTotalFrames != sprite->totalFrames());
 
   // Notify observers.
-  DocumentEvent ev(doc);
+  DocEvent ev(doc);
   ev.sprite(sprite);
   ev.frame(m_frame);
-  doc->notify_observers<DocumentEvent&>(&DocumentObserver::onRemoveFrame, ev);
+  doc->notify_observers<DocEvent&>(&DocObserver::onRemoveFrame, ev);
 }
 
 void RemoveFrame::onUndo()
 {
   Sprite* sprite = this->sprite();
-  Document* doc = sprite->document();
+  Doc* doc = static_cast<Doc*>(sprite->document());
 
   if (m_frameRemoved)
     sprite->addFrame(m_frame);
@@ -73,10 +73,10 @@ void RemoveFrame::onUndo()
   m_seq.undo();
 
   // Notify observers about the new frame.
-  DocumentEvent ev(doc);
+  DocEvent ev(doc);
   ev.sprite(sprite);
   ev.frame(m_frame);
-  doc->notify_observers<DocumentEvent&>(&DocumentObserver::onAddFrame, ev);
+  doc->notify_observers<DocEvent&>(&DocObserver::onAddFrame, ev);
 }
 
 } // namespace cmd

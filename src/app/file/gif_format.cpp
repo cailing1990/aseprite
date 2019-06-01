@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018-2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -8,9 +9,10 @@
 #include "config.h"
 #endif
 
+#include "app/color_spaces.h"
 #include "app/console.h"
 #include "app/context.h"
-#include "app/document.h"
+#include "app/doc.h"
 #include "app/file/file.h"
 #include "app/file/file_format.h"
 #include "app/file/format_options.h"
@@ -21,8 +23,8 @@
 #include "app/util/autocrop.h"
 #include "base/file_handle.h"
 #include "base/fs.h"
-#include "base/unique_ptr.h"
 #include "doc/doc.h"
+#include "render/dithering.h"
 #include "render/ordered_dither.h"
 #include "render/quantization.h"
 #include "render/render.h"
@@ -281,6 +283,9 @@ public:
       if (m_layer && m_opaque)
         m_layer->configureAsBackground();
 
+      // sRGB is the default color space for GIF files
+      m_sprite->setColorSpace(gfx::ColorSpace::MakeSRGB());
+
       return true;
     }
     else
@@ -333,7 +338,7 @@ private:
       m_sprite->addFrame(m_frameNum);
 
     // Create a temporary image loading the frame pixels from the GIF file
-    UniquePtr<Image> frameImage(
+    std::unique_ptr<Image> frameImage(
       readFrameIndexedImage(frameBounds));
 
     TRACE("GIF: Frame[%d] transparent index = %d\n", (int)m_frameNum, m_localTransparentIndex);
@@ -346,7 +351,7 @@ private:
     }
 
     // Merge this frame colors with the current palette
-    updatePalette(frameImage);
+    updatePalette(frameImage.get());
 
     // Convert the sprite to RGB if we have more than 256 colors
     if ((m_sprite->pixelFormat() == IMAGE_INDEXED) &&
@@ -359,10 +364,10 @@ private:
 
     // Composite frame with previous frame
     if (m_sprite->pixelFormat() == IMAGE_INDEXED) {
-      compositeIndexedImageToIndexed(frameBounds, frameImage);
+      compositeIndexedImageToIndexed(frameBounds, frameImage.get());
     }
     else {
-      compositeIndexedImageToRgb(frameBounds, frameImage);
+      compositeIndexedImageToRgb(frameBounds, frameImage.get());
     }
 
     // Create cel
@@ -392,7 +397,7 @@ private:
   }
 
   Image* readFrameIndexedImage(const gfx::Rect& frameBounds) {
-    UniquePtr<Image> frameImage(
+    std::unique_ptr<Image> frameImage(
       Image::create(IMAGE_INDEXED, frameBounds.w, frameBounds.h));
 
     IndexedTraits::address_t addr;
@@ -511,7 +516,7 @@ private:
       }
     }
 
-    UniquePtr<Palette> palette;
+    std::unique_ptr<Palette> palette;
     if (m_frameNum == 0)
       palette.reset(new Palette(m_frameNum, usedNColors + (needsExtraBgColor ? 1: 0)));
     else {
@@ -598,7 +603,7 @@ private:
     }
 
     ASSERT(base == palette->size());
-    m_sprite->setPalette(palette, false);
+    m_sprite->setPalette(palette.get(), false);
   }
 
   void compositeIndexedImageToIndexed(const gfx::Rect& frameBounds,
@@ -713,7 +718,7 @@ private:
     int w = m_spriteBounds.w;
     int h = m_spriteBounds.h;
 
-    m_sprite.reset(new Sprite(IMAGE_INDEXED, w, h, ncolors));
+    m_sprite.reset(new Sprite(ImageSpec(ColorMode::INDEXED, w, h), ncolors));
     m_sprite->setTransparentColor(m_bgIndex);
 
     m_currentImage.reset(Image::create(IMAGE_INDEXED, w, h));
@@ -741,8 +746,7 @@ private:
       ImageRef newImage(
         render::convert_pixel_format
         (oldImage, NULL, IMAGE_RGB,
-         render::DitheringAlgorithm::None,
-         render::DitheringMatrix(),
+         render::Dithering(),
          nullptr,
          m_sprite->palette(cel->frame()),
          m_opaque,
@@ -754,8 +758,7 @@ private:
     m_currentImage.reset(
       render::convert_pixel_format
       (m_currentImage.get(), NULL, IMAGE_RGB,
-       render::DitheringAlgorithm::None,
-       render::DitheringMatrix(),
+       render::Dithering(),
        nullptr,
        m_sprite->palette(m_frameNum),
        m_opaque,
@@ -764,8 +767,7 @@ private:
     m_previousImage.reset(
       render::convert_pixel_format
       (m_previousImage.get(), NULL, IMAGE_RGB,
-       render::DitheringAlgorithm::None,
-       render::DitheringMatrix(),
+       render::Dithering(),
        nullptr,
        m_sprite->palette(MAX(0, m_frameNum-1)),
        m_opaque,
@@ -812,7 +814,7 @@ private:
   GifFileType* m_gifFile;
   int m_fd;
   size_t m_filesize;
-  UniquePtr<Sprite> m_sprite;
+  std::unique_ptr<Sprite> m_sprite;
   gfx::Rect m_spriteBounds;
   LayerImage* m_layer;
   int m_frameNum;
@@ -871,6 +873,7 @@ public:
   GifEncoder(FileOp* fop, GifFileType* gifFile)
     : m_fop(fop)
     , m_gifFile(gifFile)
+    , m_document(fop->document())
     , m_sprite(fop->document()->sprite())
     , m_spriteBounds(m_sprite->bounds())
     , m_hasBackground(m_sprite->backgroundLayer() ? true: false)
@@ -1142,8 +1145,8 @@ private:
                   const gfx::Rect& frameBounds,
                   const DisposalMethod disposal,
                   const bool fixDuration) {
-    UniquePtr<Palette> framePaletteRef;
-    UniquePtr<RgbMap> rgbmapRef;
+    std::unique_ptr<Palette> framePaletteRef;
+    std::unique_ptr<RgbMap> rgbmapRef;
     Palette* framePalette = m_sprite->palette(frame);
     RgbMap* rgbmap = m_sprite->rgbMap(frame);
 
@@ -1328,6 +1331,8 @@ private:
 
   void renderFrame(frame_t frame, Image* dst) {
     render::Render render;
+    render.setNewBlend(m_fop->newBlend());
+
     render.setBgType(render::BgType::NONE);
     clear_image(dst, m_clearColor);
     render.renderSprite(dst, m_sprite, frame);
@@ -1335,9 +1340,13 @@ private:
 
 private:
 
-  static ColorMapObject* createColorMap(const Palette* palette) {
+  ColorMapObject* createColorMap(const Palette* palette) {
     int n = 1 << GifBitSizeLimited(palette->size());
     ColorMapObject* colormap = GifMakeMapObject(n, nullptr);
+
+    // Color space conversions
+    ConvertCS convert = convert_from_custom_to_srgb(
+      m_document->osColorSpace());
 
     for (int i=0; i<n; ++i) {
       color_t color;
@@ -1345,6 +1354,8 @@ private:
         color = palette->getEntry(i);
       else
         color = rgba(0, 0, 0, 255);
+
+      color = convert(color);
 
       colormap->Colors[i].Red   = rgba_getr(color);
       colormap->Colors[i].Green = rgba_getg(color);
@@ -1356,6 +1367,7 @@ private:
 
   FileOp* m_fop;
   GifFileType* m_gifFile;
+  const Doc* m_document;
   const Sprite* m_sprite;
   gfx::Rect m_spriteBounds;
   bool m_hasBackground;

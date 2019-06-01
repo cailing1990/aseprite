@@ -21,6 +21,7 @@
 #include "app/find_widget.h"
 #include "app/ini_file.h"
 #include "app/load_widget.h"
+#include "app/site.h"
 #include "app/ui/color_bar.h"
 #include "app/ui/color_button.h"
 #include "app/ui/keyboard_shortcuts.h"
@@ -28,7 +29,6 @@
 #include "base/bind.h"
 #include "doc/image.h"
 #include "doc/mask.h"
-#include "doc/site.h"
 #include "doc/sprite.h"
 #include "filters/replace_color_filter.h"
 #include "ui/ui.h"
@@ -70,11 +70,11 @@ public:
                    WithoutTiledCheckBox)
     , m_filter(filter)
     , m_controlsWidget(app::load_widget<Widget>("replace_color.xml", "controls"))
-    , m_fromButton(app::find_widget<ColorButton>(m_controlsWidget, "from"))
-    , m_toButton(app::find_widget<ColorButton>(m_controlsWidget, "to"))
-    , m_toleranceSlider(app::find_widget<ui::Slider>(m_controlsWidget, "tolerance"))
+    , m_fromButton(app::find_widget<ColorButton>(m_controlsWidget.get(), "from"))
+    , m_toButton(app::find_widget<ColorButton>(m_controlsWidget.get(), "to"))
+    , m_toleranceSlider(app::find_widget<ui::Slider>(m_controlsWidget.get(), "tolerance"))
   {
-    getContainer()->addChild(m_controlsWidget);
+    getContainer()->addChild(m_controlsWidget.get());
 
     m_fromButton->setColor(m_filter.getFrom());
     m_toButton->setColor(m_filter.getTo());
@@ -105,9 +105,9 @@ private:
   bool onProcessMessage(ui::Message* msg) override {
     switch (msg->type()) {
       case ui::kKeyDownMessage: {
-        const Key* key =
-          KeyboardShortcuts::instance()->command(CommandId::SwitchColors());
-        if (key && key->isPressed(msg)) {
+        KeyboardShortcuts* keys = KeyboardShortcuts::instance();
+        const KeyPtr key = keys->command(CommandId::SwitchColors());
+        if (key && key->isPressed(msg, *keys)) {
           // Switch colors
           app::Color from = m_fromButton->getColor();
           app::Color to = m_toButton->getColor();
@@ -121,7 +121,7 @@ private:
   }
 
   ReplaceColorFilterWrapper& m_filter;
-  base::UniquePtr<ui::Widget> m_controlsWidget;
+  std::unique_ptr<ui::Widget> m_controlsWidget;
   ColorButton* m_fromButton;
   ColorButton* m_toButton;
   ui::Slider* m_toleranceSlider;
@@ -130,7 +130,6 @@ private:
 class ReplaceColorCommand : public Command {
 public:
   ReplaceColorCommand();
-  Command* clone() const override { return new ReplaceColorCommand(*this); }
 
 protected:
   bool onEnabled(Context* context) override;

@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -14,6 +14,7 @@
 
 #include "app/ui/devconsole_view.h"
 
+#include "app/app.h"
 #include "app/app_menus.h"
 #include "app/ui/skin/skin_theme.h"
 #include "app/ui/workspace.h"
@@ -63,11 +64,13 @@ protected:
 
 DevConsoleView::DevConsoleView()
   : Box(VERTICAL)
-  , m_textBox("Welcome to Aseprite JavaScript Console\n(Experimental)", LEFT)
+  , m_textBox("Welcome to " PACKAGE " v" VERSION " Console\n(Experimental)", LEFT)
   , m_label(">")
   , m_entry(new CommmandEntry)
-  , m_engine(this)
+  , m_engine(App::instance()->scriptEngine())
 {
+  m_engine->setDelegate(this);
+
   addChild(&m_view);
   addChild(&m_bottomBox);
 
@@ -90,6 +93,8 @@ DevConsoleView::DevConsoleView()
 
 DevConsoleView::~DevConsoleView()
 {
+  m_engine->setDelegate(nullptr);
+
   // m_document->remove_observer(this);
   // delete m_editor;
 }
@@ -136,8 +141,8 @@ bool DevConsoleView::onProcessMessage(Message* msg)
 
 void DevConsoleView::onExecuteCommand(const std::string& cmd)
 {
-  m_engine.printLastResult();
-  m_engine.eval(cmd);
+  m_engine->printLastResult();
+  m_engine->evalCode(cmd);
 }
 
 void DevConsoleView::onConsolePrint(const char* text)

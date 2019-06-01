@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2016  David Capello
 //
 // This program is distributed under the terms of
@@ -20,6 +21,10 @@ namespace ui {
   class KeyMessage;
   class MouseMessage;
   class TouchMessage;
+}
+
+namespace doc {
+  class FrameTag;
 }
 
 namespace app {
@@ -101,6 +106,9 @@ namespace app {
     // Called when a key is released.
     virtual bool onKeyUp(Editor* editor, ui::KeyMessage* msg) { return false; }
 
+    // Called when the editor scroll is changed.
+    virtual bool onScrollChange(Editor* editor) { return false; }
+
     // Called when status bar needs to be updated.
     virtual bool onUpdateStatusBar(Editor* editor) { return false; }
 
@@ -115,7 +123,10 @@ namespace app {
     virtual bool acceptQuickTool(tools::Tool* tool) { return true; }
 
     // Custom ink in this state.
-    virtual tools::Ink* getStateInk() { return nullptr; }
+    virtual tools::Ink* getStateInk() const { return nullptr; }
+
+    // Called when a tag is deleted.
+    virtual void onRemoveFrameTag(Editor* editor, doc::FrameTag* tag) { }
 
   private:
     DISABLE_COPYING(EditorState);

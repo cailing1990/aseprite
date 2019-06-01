@@ -21,10 +21,10 @@ namespace doc {
 }
 
 namespace app {
-  class Document;
+  class Doc;
   class ContextReader;
   class ContextWriter;
-  class DocumentRange;
+  class DocRange;
 
   namespace clipboard {
     using namespace doc;
@@ -32,11 +32,11 @@ namespace app {
     enum ClipboardFormat {
       ClipboardNone,
       ClipboardImage,
-      ClipboardDocumentRange,
+      ClipboardDocRange,
       ClipboardPaletteEntries,
     };
 
-    // TODO Horrible API: refactor it (maybe a merge with she::clipboard).
+    // TODO Horrible API: refactor it (maybe a merge with os::clipboard).
 
     class ClipboardManager : public ui::ClipboardDelegate {
     public:
@@ -52,13 +52,13 @@ namespace app {
     };
 
     ClipboardFormat get_current_format();
-    void get_document_range_info(Document** document, DocumentRange* range);
+    void get_document_range_info(Doc** document, DocRange* range);
 
     void clear_content();
     void cut(ContextWriter& context);
     void copy(const ContextReader& context);
     void copy_merged(const ContextReader& context);
-    void copy_range(const ContextReader& context, const DocumentRange& range);
+    void copy_range(const ContextReader& context, const DocRange& range);
     void copy_image(const Image* image, const Mask* mask, const Palette* palette);
     void copy_palette(const Palette* palette, const PalettePicks& picks);
     void paste();

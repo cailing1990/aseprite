@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -13,9 +14,10 @@
 #include "app/console.h"
 #include "app/context.h"
 #include "app/crash/read_document.h"
+#include "app/crash/recovery_config.h"
 #include "app/crash/write_document.h"
-#include "app/document.h"
-#include "app/document_access.h"
+#include "app/doc.h"
+#include "app/doc_access.h"
 #include "app/file/file.h"
 #include "app/ui_context.h"
 #include "base/bind.h"
@@ -25,11 +27,17 @@
 #include "base/process.h"
 #include "base/split_string.h"
 #include "base/string.h"
-#include "base/unique_ptr.h"
+#include "base/thread.h"
+#include "base/time.h"
 #include "doc/cancel_io.h"
+#include "fmt/format.h"
 
 namespace app {
 namespace crash {
+
+static const char* kPidFilename = "pid";   // Process ID running the session (or non-existent if the PID was closed correctly)
+static const char* kVerFilename = "ver";   // File that indicates the Aseprite version used in the session
+static const char* kOpenFilename = "open"; // File that indicates if the document is/was open in the session (or non-existent if the document was closed correctly)
 
 Session::Backup::Backup(const std::string& dir)
   : m_dir(dir)
@@ -37,21 +45,30 @@ Session::Backup::Backup(const std::string& dir)
   DocumentInfo info;
   read_document_info(dir, info);
 
-  std::vector<char> buf(1024);
-  sprintf(&buf[0], "%s Sprite %dx%d, %d %s: %s",
-    info.format == IMAGE_RGB ? "RGB":
-    info.format == IMAGE_GRAYSCALE ? "Grayscale":
-    info.format == IMAGE_INDEXED ? "Indexed":
-    info.format == IMAGE_BITMAP ? "Bitmap": "Unknown",
-    info.width, info.height, info.frames,
-    info.frames == 1 ? "frame": "frames",
-    info.filename.c_str());
-  m_desc = &buf[0];
+  m_fn = info.filename;
+  m_desc =
+    fmt::format("{} Sprite {}x{}, {} {}",
+                info.mode == ColorMode::RGB ? "RGB":
+                info.mode == ColorMode::GRAYSCALE ? "Grayscale":
+                info.mode == ColorMode::INDEXED ? "Indexed":
+                info.mode == ColorMode::BITMAP ? "Bitmap": "Unknown",
+                info.width, info.height, info.frames,
+                info.frames == 1 ? "frame": "frames");
 }
 
-Session::Session(const std::string& path)
+std::string Session::Backup::description(const bool withFullPath) const
+{
+  return fmt::format("{}: {}",
+                     m_desc,
+                     withFullPath ? m_fn:
+                                    base::get_file_name(m_fn));
+}
+
+Session::Session(RecoveryConfig* config,
+                 const std::string& path)
   : m_pid(0)
   , m_path(path)
+  , m_config(config)
 {
 }
 
@@ -66,6 +83,14 @@ std::string Session::name() const
   base::split_string(name, parts, "-");
 
   if (parts.size() == 3) {
+    if (parts[0].size() == 4+2+2) { // YYYYMMDD -> YYYY-MM-DD
+      parts[0].insert(6, 1, '-');
+      parts[0].insert(4, 1, '-');
+    }
+    if (parts[1].size() == 2+2+2) { // HHMMSS -> HH:MM.SS
+      parts[1].insert(4, 1, '.');
+      parts[1].insert(2, 1, ':');
+    }
     return "Session date: " + parts[0] + " time: " + parts[1] + " (PID " + parts[2] + ")";
   }
   else
@@ -101,7 +126,31 @@ const Session::Backups& Session::backups()
 bool Session::isRunning()
 {
   loadPid();
-  return base::is_process_running(m_pid);
+  if (m_pid)
+    return base::is_process_running(m_pid);
+  else
+    return false;
+}
+
+bool Session::isCrashedSession()
+{
+  loadPid();
+  return (m_pid != 0);
+}
+
+bool Session::isOldSession()
+{
+  if (!m_config->keepEditedSpriteData)
+    return true;
+
+  std::string verfile = verFilename();
+  if (!base::is_file(verfile))
+    return true;
+
+  int lifespan = m_config->keepEditedSpriteDataLifespan;
+  base::Time sessionTime = base::get_modification_time(verfile);
+
+  return (sessionTime.addDays(lifespan) < base::current_time());
 }
 
 bool Session::isEmpty()
@@ -124,9 +173,32 @@ void Session::create(base::pid pid)
   verf << VERSION;
 }
 
+void Session::close()
+{
+  try {
+    // Just remove the PID file to indicate that this session was
+    // correctly closed
+    if (base::is_file(pidFilename()))
+      base::delete_file(pidFilename());
+
+    // If we don't have to keep the sprite data, just remove it from
+    // the disk.
+    if (!m_config->keepEditedSpriteData)
+      removeFromDisk();
+  }
+  catch (const std::exception&) {
+    // TODO Log this error
+  }
+}
+
 void Session::removeFromDisk()
 {
   try {
+    // Remove all backups from disk
+    Backups baks = backups();
+    for (Backup* bak : baks)
+      deleteBackup(bak);
+
     if (base::is_file(pidFilename()))
       base::delete_file(pidFilename());
 
@@ -142,11 +214,11 @@ void Session::removeFromDisk()
   }
 }
 
-class CustomWeakDocumentReader : public WeakDocumentReader
-                               , public doc::CancelIO {
+class CustomWeakDocReader : public WeakDocReader
+                          , public doc::CancelIO {
 public:
-  explicit CustomWeakDocumentReader(Document* doc)
-    : WeakDocumentReader(doc) {
+  explicit CustomWeakDocReader(Doc* doc)
+    : WeakDocReader(doc) {
   }
 
   // CancelIO impl
@@ -155,9 +227,9 @@ public:
   }
 };
 
-bool Session::saveDocumentChanges(app::Document* doc)
+bool Session::saveDocumentChanges(Doc* doc)
 {
-  CustomWeakDocumentReader reader(doc);
+  CustomWeakDocReader reader(doc);
   if (!reader.isLocked())
     return false;
 
@@ -166,34 +238,42 @@ bool Session::saveDocumentChanges(app::Document* doc)
     base::convert_to<std::string>(doc->id()));
   TRACE("RECO: Saving document '%s'...\n", dir.c_str());
 
+  // Create directory for document
   if (!base::is_directory(dir))
     base::make_directory(dir);
+
+  // Create "open" file to indicate that the document is open in this session
+  {
+    std::string openfile = base::join_path(dir, kOpenFilename);
+    if (!base::is_file(openfile)) {
+      std::ofstream of(FSTREAM_PATH(openfile));
+      if (of)
+        of << "open";
+    }
+  }
 
   // Save document information
   return write_document(dir, doc, &reader);
 }
 
-void Session::removeDocument(app::Document* doc)
+void Session::removeDocument(Doc* doc)
 {
   try {
     delete_document_internals(doc);
 
-    // Delete document backup directory
-    std::string dir = base::join_path(m_path,
-      base::convert_to<std::string>(doc->id()));
-    if (base::is_directory(dir))
-      deleteDirectory(dir);
+    markDocumentAsCorrectlyClosed(doc);
   }
-  catch (const std::exception&) {
-    // TODO Log this error
+  catch (const std::exception& ex) {
+    LOG(FATAL) << "Exception deleting document " << ex.what() << "\n";
   }
 }
 
-app::Document* Session::restoreBackupDoc(const std::string& backupDir)
+Doc* Session::restoreBackupDoc(const std::string& backupDir,
+                               base::task_token* t)
 {
   Console console;
   try {
-    app::Document* doc = read_document(backupDir);
+    Doc* doc = read_document(backupDir, t);
     if (doc) {
       fixFilename(doc);
       return doc;
@@ -205,46 +285,49 @@ app::Document* Session::restoreBackupDoc(const std::string& backupDir)
   return nullptr;
 }
 
-void Session::restoreBackup(Backup* backup)
+Doc* Session::restoreBackupDoc(Backup* backup,
+                               base::task_token* t)
 {
-  app::Document* doc = restoreBackupDoc(backup->dir());
-  if (doc)
-    UIContext::instance()->documents().add(doc);
+  return restoreBackupDoc(backup->dir(), t);
 }
 
-void Session::restoreBackupById(const ObjectId id)
+Doc* Session::restoreBackupById(const doc::ObjectId id,
+                                base::task_token* t)
 {
   std::string docDir = base::join_path(m_path, base::convert_to<std::string>(int(id)));
-  if (!base::is_directory(docDir))
-    return;
-
-  app::Document* doc = restoreBackupDoc(docDir);
-  if (doc)
-    UIContext::instance()->documents().add(doc);
+  if (base::is_directory(docDir))
+    return restoreBackupDoc(docDir, t);
+  else
+    return nullptr;
 }
 
-app::Document* Session::restoreBackupDocById(const doc::ObjectId id)
+Doc* Session::restoreBackupDocById(const doc::ObjectId id,
+                                   base::task_token* t)
 {
   std::string docDir = base::join_path(m_path, base::convert_to<std::string>(int(id)));
   if (!base::is_directory(docDir))
     return nullptr;
 
-  return restoreBackupDoc(docDir);
+  return restoreBackupDoc(docDir, t);
 }
 
-void Session::restoreRawImages(Backup* backup, RawImagesAs as)
+Doc* Session::restoreBackupRawImages(Backup* backup,
+                                     const RawImagesAs as,
+                                     base::task_token* t)
 {
   Console console;
   try {
-    app::Document* doc = read_document_with_raw_images(backup->dir(), as);
+    Doc* doc = read_document_with_raw_images(backup->dir(), as, t);
     if (doc) {
-      fixFilename(doc);
-      UIContext::instance()->documents().add(doc);
+      if (isCrashedSession())
+        fixFilename(doc);
     }
+    return doc;
   }
   catch (const std::exception& ex) {
     Console::showException(ex);
   }
+  return nullptr;
 }
 
 void Session::deleteBackup(Backup* backup)
@@ -278,12 +361,28 @@ void Session::loadPid()
 
 std::string Session::pidFilename() const
 {
-  return base::join_path(m_path, "pid");
+  return base::join_path(m_path, kPidFilename);
 }
 
 std::string Session::verFilename() const
 {
-  return base::join_path(m_path, "ver");
+  return base::join_path(m_path, kVerFilename);
+}
+
+void Session::markDocumentAsCorrectlyClosed(app::Doc* doc)
+{
+  std::string dir = base::join_path(
+    m_path, base::convert_to<std::string>(doc->id()));
+
+  ASSERT(!dir.empty());
+  if (dir.empty() || !base::is_directory(dir))
+    return;
+
+  std::string openFn = base::join_path(dir, kOpenFilename);
+  if (base::is_file(openFn)) {
+    TRACE("RECO: Document was closed correctly, deleting file '%s'\n", openFn.c_str());
+    base::delete_file(openFn);
+  }
 }
 
 void Session::deleteDirectory(const std::string& dir)
@@ -302,7 +401,7 @@ void Session::deleteDirectory(const std::string& dir)
   base::remove_directory(dir);
 }
 
-void Session::fixFilename(app::Document* doc)
+void Session::fixFilename(Doc* doc)
 {
   std::string fn = doc->filename();
   if (fn.empty())

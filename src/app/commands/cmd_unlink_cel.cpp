@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -13,7 +13,7 @@
 #include "app/commands/command.h"
 #include "app/context_access.h"
 #include "app/modules/gui.h"
-#include "app/transaction.h"
+#include "app/tx.h"
 #include "app/ui/status_bar.h"
 #include "doc/cel.h"
 #include "doc/layer.h"
@@ -24,7 +24,6 @@ namespace app {
 class UnlinkCelCommand : public Command {
 public:
   UnlinkCelCommand();
-  Command* clone() const override { return new UnlinkCelCommand(*this); }
 
 protected:
   bool onEnabled(Context* context) override;
@@ -44,10 +43,10 @@ bool UnlinkCelCommand::onEnabled(Context* context)
 void UnlinkCelCommand::onExecute(Context* context)
 {
   ContextWriter writer(context);
-  Document* document(writer.document());
+  Doc* document(writer.document());
   bool nonEditableLayers = false;
   {
-    Transaction transaction(writer.context(), "Unlink Cel");
+    Tx tx(writer.context(), "Unlink Cel");
 
     const Site* site = writer.site();
     if (site->inTimeline() &&
@@ -66,7 +65,7 @@ void UnlinkCelCommand::onExecute(Context* context)
         for (frame_t frame : site->selectedFrames().reversed()) {
           Cel* cel = layerImage->cel(frame);
           if (cel && cel->links())
-            transaction.execute(new cmd::UnlinkCel(cel));
+            tx(new cmd::UnlinkCel(cel));
         }
       }
     }
@@ -74,13 +73,13 @@ void UnlinkCelCommand::onExecute(Context* context)
       Cel* cel = writer.cel();
       if (cel && cel->links()) {
         if (cel->layer()->isEditableHierarchy())
-          transaction.execute(new cmd::UnlinkCel(writer.cel()));
+          tx(new cmd::UnlinkCel(writer.cel()));
         else
           nonEditableLayers = true;
       }
     }
 
-    transaction.commit();
+    tx.commit();
   }
 
   if (nonEditableLayers)

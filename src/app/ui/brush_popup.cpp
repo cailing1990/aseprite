@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -28,13 +29,13 @@
 #include "base/bind.h"
 #include "base/convert_to.h"
 #include "doc/brush.h"
-#include "doc/conversion_she.h"
+#include "doc/conversion_to_surface.h"
 #include "doc/image.h"
 #include "doc/palette.h"
 #include "gfx/border.h"
 #include "gfx/region.h"
-#include "she/surface.h"
-#include "she/system.h"
+#include "os/surface.h"
+#include "os/system.h"
 #include "ui/button.h"
 #include "ui/link_label.h"
 #include "ui/listitem.h"
@@ -330,7 +331,6 @@ private:
 
 BrushPopup::BrushPopup()
   : PopupWindow("", ClickBehavior::CloseOnClickInOtherWindow)
-  , m_tooltipManager(nullptr)
   , m_standardBrushes(3)
   , m_customBrushes(nullptr)
 {
@@ -410,7 +410,7 @@ void BrushPopup::regenerate(const gfx::Rect& box)
       Params params;
       params.set("change", "custom");
       params.set("slot", base::convert_to<std::string>(slot).c_str());
-      Key* key = KeyboardShortcuts::instance()->command(
+      KeyPtr key = KeyboardShortcuts::instance()->command(
         CommandId::ChangeBrush(), params);
       if (key && !key->accels().empty())
         shortcut = key->accels().front().toString();
@@ -444,7 +444,7 @@ void BrushPopup::onBrushChanges()
 }
 
 // static
-she::Surface* BrushPopup::createSurfaceForBrush(const BrushRef& origBrush)
+os::Surface* BrushPopup::createSurfaceForBrush(const BrushRef& origBrush)
 {
   Image* image = nullptr;
   BrushRef brush = origBrush;
@@ -456,7 +456,7 @@ she::Surface* BrushPopup::createSurfaceForBrush(const BrushRef& origBrush)
     image = brush->image();
   }
 
-  she::Surface* surface = she::instance()->createRgbaSurface(
+  os::Surface* surface = os::instance()->createRgbaSurface(
     std::min(10, image ? image->width(): 4),
     std::min(10, image ? image->height(): 4));
 

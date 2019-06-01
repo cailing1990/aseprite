@@ -110,7 +110,7 @@ bool PlayState::onMouseDown(Editor* editor, MouseMessage* msg)
 
   // When an editor is clicked the current view is changed.
   UIContext* context = UIContext::instance();
-  context->setActiveView(editor->getDocumentView());
+  context->setActiveView(editor->getDocView());
 
   // A click with right-button stops the animation
   if (msg->buttons() == kButtonRight) {
@@ -165,6 +165,12 @@ bool PlayState::onSetCursor(Editor* editor, const gfx::Point& mouseScreenPos)
   }
   editor->showMouseCursor(kScrollCursor);
   return true;
+}
+
+void PlayState::onRemoveFrameTag(Editor* editor, doc::FrameTag* tag)
+{
+  if (m_tag == tag)
+    m_tag = nullptr;
 }
 
 void PlayState::onPlaybackTick()

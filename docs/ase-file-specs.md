@@ -1,7 +1,5 @@
 # Aseprite File Format (.ase/.aseprite) Specifications
 
-> Copyright (C) 2001-2018 by David Capello
-
 1. [References](#references)
 2. [Introduction](#introduction)
 3. [Header](#header)
@@ -82,9 +80,14 @@ header of 16 bytes:
 
     DWORD       Bytes in this frame
     WORD        Magic number (always 0xF1FA)
-    WORD        Number of "chunks" in this frame
+    WORD        Old field which specifies the number of "chunks"
+                in this frame. If this value is 0xFFFF, we might
+                have more chunks to read in this frame
+                (so we have to use the new field)
     WORD        Frame duration (in milliseconds)
-    BYTE[6]     For future (set to zero)
+    BYTE[2]     For future (set to zero)
+    DWORD       New field which specifies the number of "chunks"
+                in this frame (if this is 0, use the old field)
 
 Then each chunk format is:
 
@@ -208,6 +211,26 @@ Adds extra information to the latest read cel.
     FIXED       Height of the cel in the sprite
     BYTE[16]    For future use (set to zero)
 
+### Color Profile Chunk (0x2007)
+
+Color profile for RGB or grayscale values.
+
+    WORD        Type
+                  0 - no color profile (as in old .aseprite files)
+                  1 - use sRGB
+                  2 - use the embedded ICC profile
+    WORD        Flags
+                  1 - use special fixed gamma
+    FIXED       Fixed gamma (1.0 = linear)
+                Note: The gamma in sRGB is 2.2 in overall but it doesn't use
+                this fixed gamma, because sRGB uses different gamma sections
+                (linear and non-linear). If sRGB is specified with a fixed
+                gamma = 1.0, it means that this is Linear sRGB.
+    BYTE[8]     Reserved (set to zero]
+    + If type = ICC:
+      DWORD     ICC profile data length
+      BYTE[]    ICC profile data. More info: http://www.color.org/ICC1V42.pdf
+
 ### Mask Chunk (0x2016) DEPRECATED
 
     SHORT       X position
@@ -222,7 +245,7 @@ Adds extra information to the latest read cel.
 
 ### Path Chunk (0x2017)
 
-  Never used.
+Never used.
 
 ### Frame Tags Chunk (0x2018)
 

@@ -1,5 +1,6 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2019  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -10,7 +11,6 @@
 
 #include "app/ui/animated_widget.h"
 #include "base/shared_ptr.h"
-#include "base/unique_ptr.h"
 #include "ui/mouse_buttons.h"
 #include "ui/timer.h"
 #include "ui/widget.h"
@@ -95,6 +95,9 @@ namespace app {
     // Called when the mouse is over a tab (the data can be null if the
     // mouse just leave all tabs)
     virtual void onMouseOverTab(Tabs* tabs, TabView* tabView) = 0;
+
+    // Called when the mouse is leaving a tab
+    virtual void onMouseLeaveTab() = 0;
 
     // Called when the user is dragging a tab outside the Tabs
     // bar.
@@ -232,6 +235,7 @@ namespace app {
     TabsDelegate* m_delegate;
 
     // Variables for animation purposes
+    TabPtr m_addedTab;
     TabPtr m_removedTab;
 
     ////////////////////////////////////////
@@ -283,7 +287,7 @@ namespace app {
     // (this overlay floats next to the mouse cursor).  It's destroyed
     // and recreated every time the tab is put inside or outside the
     // Tabs widget.
-    base::UniquePtr<ui::Overlay> m_floatingOverlay;
+    std::unique_ptr<ui::Overlay> m_floatingOverlay;
 
     // Relative mouse position inside the m_dragTab (used to adjust
     // the m_floatingOverlay precisely).

@@ -1,4 +1,5 @@
 // Aseprite Document Library
+// Copyright (c) 2018 Igara Studio S.A.
 // Copyright (c) 2001-2016 David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -39,7 +40,11 @@ namespace doc {
   void draw_ellipse(Image* image, int x1, int y1, int x2, int y2, color_t c);
   void fill_ellipse(Image* image, int x1, int y1, int x2, int y2, color_t c);
 
+  bool is_plain_image(const Image* img, color_t c);
+  bool is_empty_image(const Image* img);
+
   int count_diff_between_images(const Image* i1, const Image* i2);
+  bool is_same_image(const Image* i1, const Image* i2);
 
   void remap_image(Image* image, const Remap& remap);
 

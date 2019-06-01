@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -12,6 +13,7 @@
 #include "base/disable_copying.h"
 #include "base/process.h"
 #include "base/shared_ptr.h"
+#include "base/task.h"
 #include "doc/object_id.h"
 
 #include <fstream>
@@ -19,9 +21,9 @@
 #include <vector>
 
 namespace app {
-  class Document;
-
+class Doc;
 namespace crash {
+  struct RecoveryConfig;
 
   // A class to record/restore session information.
   class Session {
@@ -30,14 +32,16 @@ namespace crash {
     public:
       Backup(const std::string& dir);
       const std::string& dir() const { return m_dir; }
-      const std::string& description() const { return m_desc; }
+      std::string description(const bool withFullPath) const;
     private:
       std::string m_dir;
       std::string m_desc;
+      std::string m_fn;
     };
     typedef std::vector<Backup*> Backups;
 
-    Session(const std::string& path);
+    Session(RecoveryConfig* config,
+            const std::string& path);
     ~Session();
 
     std::string name() const;
@@ -45,32 +49,40 @@ namespace crash {
     const Backups& backups();
 
     bool isRunning();
+    bool isCrashedSession();
+    bool isOldSession();
     bool isEmpty();
 
     void create(base::pid pid);
+    void close();
     void removeFromDisk();
 
-    bool saveDocumentChanges(app::Document* doc);
-    void removeDocument(app::Document* doc);
+    bool saveDocumentChanges(Doc* doc);
+    void removeDocument(Doc* doc);
 
-    void restoreBackup(Backup* backup);
-    void restoreBackupById(const doc::ObjectId id);
-    app::Document* restoreBackupDocById(const doc::ObjectId id);
-    void restoreRawImages(Backup* backup, RawImagesAs as);
+    Doc* restoreBackupDoc(Backup* backup,
+                          base::task_token* t);
+    Doc* restoreBackupById(const doc::ObjectId id, base::task_token* t);
+    Doc* restoreBackupDocById(const doc::ObjectId id, base::task_token* t);
+    Doc* restoreBackupRawImages(Backup* backup,
+                                const RawImagesAs as, base::task_token* t);
     void deleteBackup(Backup* backup);
 
   private:
-    app::Document* restoreBackupDoc(const std::string& backupDir);
+    Doc* restoreBackupDoc(const std::string& backupDir,
+                          base::task_token* t);
     void loadPid();
     std::string pidFilename() const;
     std::string verFilename() const;
+    void markDocumentAsCorrectlyClosed(Doc* doc);
     void deleteDirectory(const std::string& dir);
-    void fixFilename(app::Document* doc);
+    void fixFilename(Doc* doc);
 
     base::pid m_pid;
     std::string m_path;
     std::string m_version;
     Backups m_backups;
+    RecoveryConfig* m_config;
 
     DISABLE_COPYING(Session);
   };

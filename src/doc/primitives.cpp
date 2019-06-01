@@ -1,4 +1,5 @@
 // Aseprite Document Library
+// Copyright (c) 2018 Igara Studio S.A.
 // Copyright (c) 2001-2016 David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -278,7 +279,7 @@ static void hline_for_image(int x1, int y, int x2, Data* data)
 void draw_line(Image* image, int x1, int y1, int x2, int y2, color_t color)
 {
   Data data = { image, color };
-  algo_line(x1, y1, x2, y2, &data, (AlgoPixel)pixel_for_image);
+  algo_line_continuous(x1, y1, x2, y2, &data, (AlgoPixel)pixel_for_image);
 }
 
 void draw_ellipse(Image* image, int x1, int y1, int x2, int y2, color_t color)
@@ -296,6 +297,19 @@ void fill_ellipse(Image* image, int x1, int y1, int x2, int y2, color_t color)
 namespace {
 
 template<typename ImageTraits>
+bool is_plain_image_templ(const Image* img, const color_t color)
+{
+  const LockImageBits<ImageTraits> bits(img);
+  typename LockImageBits<ImageTraits>::const_iterator it, end;
+  for (it=bits.begin(), end=bits.end(); it!=end; ++it) {
+    if (*it != color)
+      return false;
+  }
+  ASSERT(it == end);
+  return true;
+}
+
+template<typename ImageTraits>
 int count_diff_between_images_templ(const Image* i1, const Image* i2)
 {
   int diff = 0;
@@ -305,16 +319,51 @@ int count_diff_between_images_templ(const Image* i1, const Image* i2)
   for (it1 = bits1.begin(), end1 = bits1.end(),
        it2 = bits2.begin(), end2 = bits2.end();
        it1 != end1 && it2 != end2; ++it1, ++it2) {
-    if (*it1 != *it2)
+    if (!ImageTraits::same_color(*it1, *it2))
       diff++;
   }
-
   ASSERT(it1 == end1);
   ASSERT(it2 == end2);
   return diff;
 }
 
+template<typename ImageTraits>
+int is_same_image_templ(const Image* i1, const Image* i2)
+{
+  const LockImageBits<ImageTraits> bits1(i1);
+  const LockImageBits<ImageTraits> bits2(i2);
+  typename LockImageBits<ImageTraits>::const_iterator it1, it2, end1, end2;
+  for (it1 = bits1.begin(), end1 = bits1.end(),
+       it2 = bits2.begin(), end2 = bits2.end();
+       it1 != end1 && it2 != end2; ++it1, ++it2) {
+    if (!ImageTraits::same_color(*it1, *it2))
+      return false;
+  }
+  ASSERT(it1 == end1);
+  ASSERT(it2 == end2);
+  return true;
+}
+
 } // anonymous namespace
+
+bool is_plain_image(const Image* img, color_t c)
+{
+  switch (img->pixelFormat()) {
+    case IMAGE_RGB:       return is_plain_image_templ<RgbTraits>(img, c);
+    case IMAGE_GRAYSCALE: return is_plain_image_templ<GrayscaleTraits>(img, c);
+    case IMAGE_INDEXED:   return is_plain_image_templ<IndexedTraits>(img, c);
+    case IMAGE_BITMAP:    return is_plain_image_templ<BitmapTraits>(img, c);
+  }
+  return false;
+}
+
+bool is_empty_image(const Image* img)
+{
+  color_t c = 0;                // alpha = 0
+  if (img->colorMode() == ColorMode::INDEXED)
+    c = img->maskColor();
+  return is_plain_image(img, c);
+}
 
 int count_diff_between_images(const Image* i1, const Image* i2)
 {
@@ -332,6 +381,24 @@ int count_diff_between_images(const Image* i1, const Image* i2)
 
   ASSERT(false);
   return -1;
+}
+
+bool is_same_image(const Image* i1, const Image* i2)
+{
+  if ((i1->pixelFormat() != i2->pixelFormat()) ||
+      (i1->width() != i2->width()) ||
+      (i1->height() != i2->height()))
+    return false;
+
+  switch (i1->pixelFormat()) {
+    case IMAGE_RGB:       return is_same_image_templ<RgbTraits>(i1, i2);
+    case IMAGE_GRAYSCALE: return is_same_image_templ<GrayscaleTraits>(i1, i2);
+    case IMAGE_INDEXED:   return is_same_image_templ<IndexedTraits>(i1, i2);
+    case IMAGE_BITMAP:    return is_same_image_templ<BitmapTraits>(i1, i2);
+  }
+
+  ASSERT(false);
+  return false;
 }
 
 void remap_image(Image* image, const Remap& remap)

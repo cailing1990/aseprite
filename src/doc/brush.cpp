@@ -1,5 +1,6 @@
 // Aseprite Document Library
-// Copyright (c) 2001-2016 David Capello
+// Copyright (C) 2019  Igara Studio S.A.
+// Copyright (C) 2001-2016  David Capello
 //
 // This file is released under the terms of the MIT license.
 // Read LICENSE.txt for more information.
@@ -18,6 +19,7 @@
 #include "doc/image_impl.h"
 #include "doc/primitives.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace doc {
@@ -29,7 +31,7 @@ Brush::Brush()
   m_type = kCircleBrushType;
   m_size = 1;
   m_angle = 0;
-  m_pattern = BrushPattern::DEFAULT;
+  m_pattern = BrushPattern::DEFAULT_FOR_UI;
   m_gen = 0;
 
   regenerate();
@@ -40,7 +42,7 @@ Brush::Brush(BrushType type, int size, int angle)
   m_type = type;
   m_size = size;
   m_angle = angle;
-  m_pattern = BrushPattern::DEFAULT;
+  m_pattern = BrushPattern::DEFAULT_FOR_UI;
   m_gen = 0;
 
   regenerate();
@@ -279,6 +281,14 @@ void Brush::setImageColor(ImageColor imageColor, color_t color)
   }
 }
 
+void Brush::setCenter(const gfx::Point& center)
+{
+  m_center = center;
+  m_bounds = gfx::Rect(-m_center,
+                       gfx::Size(m_image->width(),
+                                 m_image->height()));
+}
+
 // Cleans the brush's data (image and region).
 void Brush::clean()
 {
@@ -306,6 +316,8 @@ void Brush::regenerate()
 
   m_image.reset(Image::create(IMAGE_BITMAP, size, size));
   m_maskBitmap.reset();
+
+  resetBounds();
 
   if (size == 1) {
     clear_image(m_image.get(), BitmapTraits::max_value);
@@ -343,27 +355,25 @@ void Brush::regenerate()
         break;
 
       case kLineBrushType: {
-        double a = PI * m_angle / 180;
-        double r = m_size/2;
-        double d = m_size;
-        int x1 = int(r + r*cos(a+PI));
-        int y1 = int(r - r*sin(a+PI));
-        int x2 = int(x1 + d*cos(a));
-        int y2 = int(y1 - d*sin(a));
+        const double a = PI * m_angle / 180;
+        const double r = m_size / 2.0;
+        const int cx = m_center.x;
+        const int cy = m_center.y;
+        const int dx = int(r*cos(-a));
+        const int dy = int(r*sin(-a));
 
-        draw_line(m_image.get(), x1, y1, x2, y2, BitmapTraits::max_value);
+        draw_line(m_image.get(), cx, cy, cx+dx, cy+dy, BitmapTraits::max_value);
+        draw_line(m_image.get(), cx, cy, cx-dx, cy-dy, BitmapTraits::max_value);
         break;
       }
     }
   }
-
-  resetBounds();
 }
 
 void Brush::resetBounds()
 {
-  m_center = gfx::Point(m_image->width()/2,
-                        m_image->height()/2);
+  m_center = gfx::Point(std::max(0, m_image->width()/2),
+                        std::max(0, m_image->height()/2));
   m_bounds = gfx::Rect(-m_center,
                        gfx::Size(m_image->width(),
                                  m_image->height()));

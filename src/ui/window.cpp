@@ -1,4 +1,5 @@
 // Aseprite UI Library
+// Copyright (C) 2018  Igara Studio S.A.
 // Copyright (C) 2001-2017  David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -127,7 +128,7 @@ Window::Window(Type type, const std::string& text)
 
 Window::~Window()
 {
-  manager()->_closeWindow(this, false);
+  manager()->_closeWindow(this, isVisible());
 }
 
 void Window::setAutoRemap(bool state)
@@ -592,9 +593,11 @@ void Window::moveWindow(const gfx::Rect& rect, bool use_blit)
 #define FLAGS (DrawableRegionFlags)(kCutTopWindows | kUseChildArea)
 
   Manager* manager = this->manager();
-  Message* msg;
 
-  manager->dispatchMessages();
+  // Discard enqueued kWinMoveMessage for this window because we are
+  // going to send a new kWinMoveMessage with the latest window
+  // bounds.
+  manager->removeMessagesFor(this, kWinMoveMessage);
 
   // Get the window's current position
   Rect old_pos = bounds();
@@ -605,8 +608,8 @@ void Window::moveWindow(const gfx::Rect& rect, bool use_blit)
   Rect man_pos = manager->bounds();
 
   // Send a kWinMoveMessage message to the window
-  msg = new Message(kWinMoveMessage);
-  msg->addRecipient(this);
+  Message* msg = new Message(kWinMoveMessage);
+  msg->setRecipient(this);
   manager->enqueueMessage(msg);
 
   // Get the region & the drawable region of the window
@@ -670,7 +673,7 @@ void Window::moveWindow(const gfx::Rect& rect, bool use_blit)
     invalidateRegion(reg1);
   }
 
-  manager->invalidateDisplayRegion(invalidManagerRegion);
+  manager->invalidateRegion(invalidManagerRegion);
 
   onWindowMovement();
 }

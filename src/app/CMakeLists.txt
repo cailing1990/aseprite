@@ -1,93 +1,91 @@
 # Aseprite
+# Copyright (C) 2018-2019  Igara Studio S.A.
 # Copyright (C) 2001-2018  David Capello
 
 # Generate a ui::Widget for each widget in a XML file
-file(GLOB widget_files ${CMAKE_SOURCE_DIR}/data/widgets/*.xml)
+file(GLOB widget_files ${SOURCE_DATA_DIR}/widgets/*.xml)
 foreach(widget_file ${widget_files})
   get_filename_component(widget_name ${widget_file} NAME_WE)
   set(output_fn ${CMAKE_CURRENT_BINARY_DIR}/${widget_name}.xml.h)
 
   add_custom_command(
     OUTPUT ${output_fn}
-    COMMAND ${CMAKE_BINARY_DIR}/bin/gen --input ${widget_file} --widgetid ${widget_name} > ${output_fn}.tmp
+    COMMAND ${GEN_EXE} --input ${widget_file} --widgetid ${widget_name} > ${output_fn}.tmp
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${output_fn}.tmp ${output_fn}
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     MAIN_DEPENDENCY ${widget_file}
-    DEPENDS gen)
+    DEPENDS ${GEN_DEP})
 
   list(APPEND generated_files ${output_fn})
 endforeach()
 
 # Generate preference types from data/pref.xml
-set(pref_xml ${CMAKE_SOURCE_DIR}/data/pref.xml)
+set(pref_xml ${SOURCE_DATA_DIR}/pref.xml)
 
 set(output_fn ${CMAKE_CURRENT_BINARY_DIR}/pref.xml.h)
 add_custom_command(
   OUTPUT ${output_fn}
-  COMMAND ${CMAKE_BINARY_DIR}/bin/gen --input ${pref_xml} --pref-h > ${output_fn}.tmp
+  COMMAND ${GEN_EXE} --input ${pref_xml} --pref-h > ${output_fn}.tmp
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${output_fn}.tmp ${output_fn}
   WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   MAIN_DEPENDENCY ${pref_xml}
-  DEPENDS gen)
+  DEPENDS ${GEN_DEP})
 list(APPEND generated_files ${output_fn})
 
 set(output_fn ${CMAKE_CURRENT_BINARY_DIR}/pref.xml.cpp)
 add_custom_command(
   OUTPUT ${output_fn}
-  COMMAND ${CMAKE_BINARY_DIR}/bin/gen --input ${pref_xml} --pref-cpp > ${output_fn}.tmp
+  COMMAND ${GEN_EXE} --input ${pref_xml} --pref-cpp > ${output_fn}.tmp
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${output_fn}.tmp ${output_fn}
   WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   MAIN_DEPENDENCY ${pref_xml}
-  DEPENDS gen)
+  DEPENDS ${GEN_DEP})
 list(APPEND generated_files ${output_fn})
 
 # Generate theme.xml.h from data/extensions/aseprite-theme/theme.xml
-set(theme_xml ${CMAKE_SOURCE_DIR}/data/extensions/aseprite-theme/theme.xml)
+set(theme_xml ${SOURCE_DATA_DIR}/extensions/aseprite-theme/theme.xml)
 set(output_fn ${CMAKE_CURRENT_BINARY_DIR}/theme.xml.h)
 add_custom_command(
   OUTPUT ${output_fn}
-  COMMAND ${CMAKE_BINARY_DIR}/bin/gen --input ${theme_xml} --theme > ${output_fn}.tmp
+  COMMAND ${GEN_EXE} --input ${theme_xml} --theme > ${output_fn}.tmp
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${output_fn}.tmp ${output_fn}
   WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   MAIN_DEPENDENCY ${theme_xml}
-  DEPENDS gen)
+  DEPENDS ${GEN_DEP})
 list(APPEND generated_files ${output_fn})
 
 # Generate strings.ini.h from data/strings/en.ini
-set(strings_en_ini ${CMAKE_SOURCE_DIR}/data/strings/en.ini)
+set(strings_en_ini ${SOURCE_DATA_DIR}/strings/en.ini)
 set(output_fn ${CMAKE_CURRENT_BINARY_DIR}/strings.ini.h)
 add_custom_command(
   OUTPUT ${output_fn}
-  COMMAND ${CMAKE_BINARY_DIR}/bin/gen --input ${strings_en_ini} --strings > ${output_fn}.tmp
+  COMMAND ${GEN_EXE} --input ${strings_en_ini} --strings > ${output_fn}.tmp
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${output_fn}.tmp ${output_fn}
   WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   MAIN_DEPENDENCY ${strings_en_ini}
-  DEPENDS gen)
+  DEPENDS ${GEN_DEP})
 list(APPEND generated_files ${output_fn})
 
 # Generate command_ids.ini.h from data/strings/en.ini
 set(output_fn ${CMAKE_CURRENT_BINARY_DIR}/command_ids.ini.h)
 add_custom_command(
   OUTPUT ${output_fn}
-  COMMAND ${CMAKE_BINARY_DIR}/bin/gen --input ${strings_en_ini} --command-ids > ${output_fn}.tmp
+  COMMAND ${GEN_EXE} --input ${strings_en_ini} --command-ids > ${output_fn}.tmp
   COMMAND ${CMAKE_COMMAND} -E copy_if_different ${output_fn}.tmp ${output_fn}
   WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   MAIN_DEPENDENCY ${strings_en_ini}
-  DEPENDS gen)
+  DEPENDS ${GEN_DEP})
 list(APPEND generated_files ${output_fn})
 
 # Check translations
-file(GLOB string_files ${CMAKE_SOURCE_DIR}/data/strings/*.ini)
+file(GLOB string_files ${SOURCE_DATA_DIR}/strings/*.ini)
 set(output_fn ${CMAKE_CURRENT_BINARY_DIR}/check-translations.txt)
 add_custom_command(
   OUTPUT ${output_fn}
-  COMMAND ${CMAKE_BINARY_DIR}/bin/gen --widgets-dir "${CMAKE_SOURCE_DIR}/data/widgets/" --strings-dir "${CMAKE_SOURCE_DIR}/data/strings/" --gui-file "${CMAKE_SOURCE_DIR}/data/gui.xml" >${output_fn}
+  COMMAND ${GEN_EXE} --widgets-dir "${SOURCE_DATA_DIR}/widgets/" --strings-dir "${SOURCE_DATA_DIR}/strings/" --gui-file "${SOURCE_DATA_DIR}/gui.xml" >${output_fn}
   WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS gen ${widget_files} ${string_files} "${CMAKE_SOURCE_DIR}/data/gui.xml")
+  DEPENDS ${GEN_DEP} ${widget_files} ${string_files} "${SOURCE_DATA_DIR}/gui.xml")
 list(APPEND generated_files ${output_fn})
-
-# Directory where generated files by "gen" utility will stay.
-include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
 if(WITH_WEBP_SUPPORT)
   add_definitions(-DASEPRITE_WITH_WEBP_SUPPORT)
@@ -100,7 +98,7 @@ add_definitions(-DLIBARCHIVE_STATIC)
 # app-lib target
 
 # These specific-platform files should be in an external library
-# (e.g. "base" or "she").
+# (e.g. "base" or "os").
 set(app_platform_files)
 if(WIN32)
   set(app_platform_files
@@ -133,6 +131,7 @@ set(file_formats
   file/jpeg_format.cpp
   file/pcx_format.cpp
   file/png_format.cpp
+  file/svg_format.cpp
   file/tga_format.cpp)
 if(WITH_WEBP_SUPPORT)
   list(APPEND file_formats file/webp_format.cpp)
@@ -144,22 +143,49 @@ if(ENABLE_SCRIPTING)
   if(ENABLE_UI)
     set(scripting_files_ui
       commands/cmd_developer_console.cpp
+      commands/cmd_open_script_folder.cpp
       ui/devconsole_view.cpp)
   endif()
   set(scripting_files
     commands/cmd_run_script.cpp
+    script/app_command_object.cpp
     script/app_object.cpp
-    script/app_scripting.cpp
-    script/console_object.cpp
+    script/brush_class.cpp
+    script/cel_class.cpp
+    script/cels_class.cpp
+    script/color_class.cpp
+    script/color_space_class.cpp
+    script/dialog_class.cpp
+    script/engine.cpp
+    script/frame_class.cpp
+    script/frames_class.cpp
     script/image_class.cpp
-    script/image_wrap.cpp
-    script/pixel_color_class.cpp
+    script/image_iterator_class.cpp
+    script/image_spec_class.cpp
+    script/images_class.cpp
+    script/layer_class.cpp
+    script/layers_class.cpp
+    script/luacpp.cpp
+    script/palette_class.cpp
+    script/palettes_class.cpp
+    script/pixel_color_object.cpp
     script/point_class.cpp
+    script/preferences_object.cpp
+    script/range_class.cpp
     script/rectangle_class.cpp
+    script/security.cpp
     script/selection_class.cpp
+    script/site_class.cpp
     script/size_class.cpp
+    script/slice_class.cpp
+    script/slices_class.cpp
     script/sprite_class.cpp
-    script/sprite_wrap.cpp
+    script/sprites_class.cpp
+    script/tag_class.cpp
+    script/tags_class.cpp
+    script/tool_class.cpp
+    script/values.cpp
+    script/version_class.cpp
     shell.cpp
     ${scripting_files_ui})
 endif()
@@ -172,14 +198,13 @@ if(ENABLE_UI)
     commands/cmd_about.cpp
     commands/cmd_add_color.cpp
     commands/cmd_advanced_mode.cpp
-    commands/cmd_background_from_layer.cpp
     commands/cmd_cancel.cpp
-    commands/cmd_canvas_size.cpp
     commands/cmd_cel_properties.cpp
     commands/cmd_change_brush.cpp
     commands/cmd_change_color.cpp
     commands/cmd_clear.cpp
     commands/cmd_clear_cel.cpp
+    commands/cmd_clear_recent_files.cpp
     commands/cmd_close_file.cpp
     commands/cmd_color_quantization.cpp
     commands/cmd_contiguous_fill.cpp
@@ -193,11 +218,9 @@ if(ENABLE_UI)
     commands/cmd_duplicate_sprite.cpp
     commands/cmd_duplicate_view.cpp
     commands/cmd_exit.cpp
-    commands/cmd_export_sprite_sheet.cpp
     commands/cmd_eyedropper.cpp
     commands/cmd_fill_and_stroke.cpp
     commands/cmd_fit_screen.cpp
-    commands/cmd_flatten_layers.cpp
     commands/cmd_flip.cpp
     commands/cmd_frame_properties.cpp
     commands/cmd_frame_tag_properties.cpp
@@ -211,7 +234,6 @@ if(ENABLE_UI)
     commands/cmd_invert_mask.cpp
     commands/cmd_keyboard_shortcuts.cpp
     commands/cmd_launch.cpp
-    commands/cmd_layer_from_background.cpp
     commands/cmd_layer_lock.cpp
     commands/cmd_layer_opacity.cpp
     commands/cmd_layer_properties.cpp
@@ -221,15 +243,12 @@ if(ENABLE_UI)
     commands/cmd_mask_all.cpp
     commands/cmd_mask_by_color.cpp
     commands/cmd_mask_content.cpp
-    commands/cmd_merge_down_layer.cpp
     commands/cmd_modify_selection.cpp
     commands/cmd_move_cel.cpp
     commands/cmd_move_mask.cpp
     commands/cmd_new_brush.cpp
     commands/cmd_new_file.cpp
-    commands/cmd_new_frame.cpp
     commands/cmd_new_frame_tag.cpp
-    commands/cmd_new_layer.cpp
     commands/cmd_new_sprite_from_selection.cpp
     commands/cmd_onionskin.cpp
     commands/cmd_open_browser.cpp
@@ -238,7 +257,6 @@ if(ENABLE_UI)
     commands/cmd_open_with_app.cpp
     commands/cmd_options.cpp
     commands/cmd_palette_editor.cpp
-    commands/cmd_palette_size.cpp
     commands/cmd_paste.cpp
     commands/cmd_paste_text.cpp
     commands/cmd_pixel_perfect_mode.cpp
@@ -246,8 +264,8 @@ if(ENABLE_UI)
     commands/cmd_refresh.cpp
     commands/cmd_remove_frame.cpp
     commands/cmd_remove_frame_tag.cpp
-    commands/cmd_remove_layer.cpp
     commands/cmd_remove_slice.cpp
+    commands/cmd_reopen_closed_file.cpp
     commands/cmd_repeat_last_export.cpp
     commands/cmd_reselect_mask.cpp
     commands/cmd_reverse_frames.cpp
@@ -281,6 +299,7 @@ if(ENABLE_UI)
     commands/filters/cmd_despeckle.cpp
     commands/filters/cmd_hue_saturation.cpp
     commands/filters/cmd_invert_color.cpp
+    commands/filters/cmd_outline.cpp
     commands/filters/cmd_replace_color.cpp
     commands/filters/color_curve_editor.cpp
     commands/filters/convolution_matrix_stock.cpp
@@ -290,20 +309,10 @@ if(ENABLE_UI)
     commands/filters/filter_window.cpp
     commands/filters/filter_worker.cpp
     file_selector.cpp
-    gui_xml.cpp
     modules/editors.cpp
     modules/gfx.cpp
     modules/gui.cpp
     send_crash.cpp
-    tools/active_tool.cpp
-    tools/ink_type.cpp
-    tools/intertwine.cpp
-    tools/pick_ink.cpp
-    tools/point_shape.cpp
-    tools/stroke.cpp
-    tools/symmetries.cpp
-    tools/tool_box.cpp
-    tools/tool_loop_manager.cpp
     ui/app_menuitem.cpp
     ui/backup_indicator.cpp
     ui/browser_view.cpp
@@ -321,7 +330,7 @@ if(ENABLE_UI)
     ui/configure_timeline_popup.cpp
     ui/context_bar.cpp
     ui/dithering_selector.cpp
-    ui/document_view.cpp
+    ui/doc_view.cpp
     ui/drop_down_button.cpp
     ui/editor/brush_preview.cpp
     ui/editor/drawing_state.cpp
@@ -343,7 +352,6 @@ if(ENABLE_UI)
     ui/editor/select_box_state.cpp
     ui/editor/standby_state.cpp
     ui/editor/state_with_wheel_behavior.cpp
-    ui/editor/tool_loop_impl.cpp
     ui/editor/transform_handles.cpp
     ui/editor/zooming_state.cpp
     ui/export_file_window.cpp
@@ -351,6 +359,7 @@ if(ENABLE_UI)
     ui/file_list.cpp
     ui/file_list_view.cpp
     ui/file_selector.cpp
+    ui/filename_field.cpp
     ui/font_popup.cpp
     ui/frame_tag_window.cpp
     ui/hex_color_entry.cpp
@@ -360,7 +369,6 @@ if(ENABLE_UI)
     ui/keyboard_shortcuts.cpp
     ui/main_menu_bar.cpp
     ui/main_window.cpp
-    ui/news_listbox.cpp
     ui/notifications.cpp
     ui/optional_alert.cpp
     ui/palette_popup.cpp
@@ -373,6 +381,7 @@ if(ENABLE_UI)
     ui/resources_listbox.cpp
     ui/search_entry.cpp
     ui/select_accelerator.cpp
+    ui/selection_mode_field.cpp
     ui/skin/font_data.cpp
     ui/skin/skin_part.cpp
     ui/skin/skin_property.cpp
@@ -382,6 +391,7 @@ if(ENABLE_UI)
     ui/slider2.cpp
     ui/status_bar.cpp
     ui/tabs.cpp
+    ui/task_widget.cpp
     ui/timeline/ani_controls.cpp
     ui/timeline/timeline.cpp
     ui/toolbar.cpp
@@ -394,9 +404,16 @@ if(ENABLE_UI)
     util/clipboard.cpp
     util/clipboard_native.cpp
     widget_loader.cpp)
+  if(ENABLE_NEWS)
+    set(ui_app_files
+      res/http_loader.cpp
+      ui/news_listbox.cpp
+      ${ui_app_files})
+  endif()
 endif()
 
 add_library(app-lib
+  active_site_handler.cpp
   app.cpp
   check_update.cpp
   cli/app_options.cpp
@@ -412,12 +429,14 @@ add_library(app-lib
   cmd/add_layer.cpp
   cmd/add_palette.cpp
   cmd/add_slice.cpp
+  cmd/assign_color_profile.cpp
   cmd/background_from_layer.cpp
   cmd/clear_cel.cpp
   cmd/clear_image.cpp
   cmd/clear_mask.cpp
   cmd/clear_rect.cpp
   cmd/configure_background.cpp
+  cmd/convert_color_profile.cpp
   cmd/copy_cel.cpp
   cmd/copy_frame.cpp
   cmd/copy_rect.cpp
@@ -481,28 +500,42 @@ add_library(app-lib
   cmd_transaction.cpp
   color.cpp
   color_picker.cpp
+  color_spaces.cpp
   color_utils.cpp
+  commands/cmd_background_from_layer.cpp
+  commands/cmd_canvas_size.cpp
+  commands/cmd_cel_opacity.cpp
   commands/cmd_change_pixel_format.cpp
   commands/cmd_crop.cpp
+  commands/cmd_export_sprite_sheet.cpp
+  commands/cmd_flatten_layers.cpp
+  commands/cmd_layer_from_background.cpp
   commands/cmd_load_palette.cpp
+  commands/cmd_merge_down_layer.cpp
+  commands/cmd_new_frame.cpp
+  commands/cmd_new_layer.cpp
   commands/cmd_open_file.cpp
+  commands/cmd_palette_size.cpp
+  commands/cmd_remove_layer.cpp
   commands/cmd_save_file.cpp
   commands/cmd_sprite_size.cpp
   commands/cmd_undo.cpp
   commands/command.cpp
   commands/commands.cpp
   commands/move_thing.cpp
+  commands/new_params.cpp
   commands/quick_command.cpp
   console.cpp
   context.cpp
   context_flags.cpp
-  document.cpp
-  document_api.cpp
-  document_diff.cpp
-  document_exporter.cpp
-  document_range.cpp
-  document_range_ops.cpp
-  document_undo.cpp
+  doc.cpp
+  doc_api.cpp
+  doc_diff.cpp
+  doc_exporter.cpp
+  doc_range.cpp
+  doc_range_ops.cpp
+  doc_undo.cpp
+  docs.cpp
   extensions.cpp
   extra_cel.cpp
   file/file.cpp
@@ -515,6 +548,7 @@ add_library(app-lib
   filename_formatter.cpp
   flatten.cpp
   font_path.cpp
+  gui_xml.cpp
   i18n/strings.cpp
   i18n/xml_translator.cpp
   ini_file.cpp
@@ -526,23 +560,33 @@ add_library(app-lib
   modules.cpp
   modules/palettes.cpp
   pref/preferences.cpp
-  project.cpp
   recent_files.cpp
-  res/http_loader.cpp
   res/palettes_loader_delegate.cpp
   res/resources_loader.cpp
   resource_finder.cpp
   restore_visible_layers.cpp
-  rw_lock.cpp
   shade.cpp
+  site.cpp
   snap_to_grid.cpp
   sprite_job.cpp
+  task.cpp
   thumbnail_generator.cpp
   thumbnails.cpp
+  tools/active_tool.cpp
+  tools/ink_type.cpp
+  tools/intertwine.cpp
+  tools/pick_ink.cpp
+  tools/point_shape.cpp
+  tools/stroke.cpp
+  tools/symmetries.cpp
+  tools/tool_box.cpp
+  tools/tool_loop_manager.cpp
   transaction.cpp
   transformation.cpp
+  ui/editor/tool_loop_impl.cpp
   ui/layer_frame_comboboxes.cpp
   util/autocrop.cpp
+  util/buffer_region.cpp
   util/create_cel_copy.cpp
   util/expand_cel_canvas.cpp
   util/filetoks.cpp
@@ -555,7 +599,6 @@ add_library(app-lib
   util/range_utils.cpp
   util/readable_time.cpp
   util/wrap_point.cpp
-  webserver.cpp
   xml_document.cpp
   xml_exception.cpp
   ${ui_app_files}
@@ -573,10 +616,10 @@ target_link_libraries(app-lib
   filters-lib
   fixmath-lib
   flic-lib
-  gfx-lib
-  net-lib
+  laf-gfx
   render-lib
-  she
+  laf-ft
+  laf-os
   ui-lib
   undo
   ${CMARK_LIBRARIES}
@@ -593,16 +636,19 @@ target_link_libraries(app-lib
   fmt
   tinyexpr)
 
+# Directory where generated files by "gen" utility will stay.
+target_include_directories(app-lib PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
+
+if(REQUIRE_CURL)
+  target_link_libraries(app-lib net-lib)
+endif()
+
 if(ENABLE_SCRIPTING)
-  target_link_libraries(app-lib script-lib)
+  target_link_libraries(app-lib lua lauxlib lualib)
 endif()
 
 if(ENABLE_UPDATER)
   target_link_libraries(app-lib updater-lib)
-endif()
-
-if(ENABLE_WEBSERVER)
-  target_link_libraries(app-lib webserver-lib)
 endif()
 
 if(ENABLE_STEAM)

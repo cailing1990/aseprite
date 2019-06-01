@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -8,6 +9,8 @@
 #define APP_TRANSACTION_H_INCLUDED
 #pragma once
 
+#include "app/doc_observer.h"
+
 #include <string>
 
 namespace app {
@@ -15,8 +18,8 @@ namespace app {
   class Cmd;
   class CmdTransaction;
   class Context;
-  class DocumentRange;
-  class DocumentUndo;
+  class DocRange;
+  class DocUndo;
 
   enum Modification {
     ModifyDocument,      // This item changes the "saved status" of the document.
@@ -38,7 +41,7 @@ namespace app {
   //   transaction.commit();
   // }
   //
-  class Transaction {
+  class Transaction : public DocObserver {
   public:
     // Starts a undoable sequence of operations in a transaction that
     // can be committed or rollbacked.  All the operations will be
@@ -49,7 +52,7 @@ namespace app {
     // Can be used to change the new document range resulting from
     // executing this transaction. This range can be used then in
     // undo/redo operations to restore the Timeline selection/range.
-    void setNewDocumentRange(const DocumentRange& range);
+    void setNewDocRange(const DocRange& range);
 
     // This must be called to commit all the changes, so the undo will
     // be finally added in the sprite.
@@ -59,19 +62,28 @@ namespace app {
     // created).
     //
     // WARNING: This must be called from the main UI thread, because
-    // it will generate a DocumentUndo::add() which triggers a
-    // DocumentUndoObserver::onAddUndoState() notification, which
+    // it will generate a DocUndo::add() which triggers a
+    // DocUndoObserver::onAddUndoState() notification, which
     // updates the Undo History window UI.
     void commit();
 
     void execute(Cmd* cmd);
 
   private:
+    // List of changes during the execution of this transaction
+    enum class Changes { kNone = 0,
+                         kSelection = 1 };
+
     void rollback();
 
+    // DocObserver impl
+    void onSelectionChanged(DocEvent& ev) override;
+
     Context* m_ctx;
-    DocumentUndo* m_undo;
+    Doc* m_doc;
+    DocUndo* m_undo;
     CmdTransaction* m_cmds;
+    Changes m_changes;
   };
 
 } // namespace app

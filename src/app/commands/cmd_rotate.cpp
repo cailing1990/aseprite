@@ -1,5 +1,6 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2019  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -13,14 +14,14 @@
 #include "app/commands/cmd_rotate.h"
 #include "app/commands/params.h"
 #include "app/context_access.h"
-#include "app/document_api.h"
-#include "app/document_range.h"
+#include "app/doc_api.h"
+#include "app/doc_range.h"
 #include "app/i18n/strings.h"
 #include "app/modules/editors.h"
 #include "app/modules/gui.h"
 #include "app/sprite_job.h"
 #include "app/tools/tool_box.h"
-#include "app/transaction.h"
+#include "app/tx.h"
 #include "app/ui/color_bar.h"
 #include "app/ui/editor/editor.h"
 #include "app/ui/status_bar.h"
@@ -79,7 +80,7 @@ protected:
 
   // [working thread]
   void onJob() override {
-    DocumentApi api = document()->getApi(transaction());
+    DocApi api = document()->getApi(tx());
 
     // 1) Rotate cel positions
     for (Cel* cel : m_cels) {
@@ -91,7 +92,7 @@ protected:
         gfx::RectF bounds = cel->boundsF();
         rotate_rect(bounds);
         if (cel->boundsF() != bounds)
-          transaction().execute(new cmd::SetCelBoundsF(cel, bounds));
+          tx()(new cmd::SetCelBoundsF(cel, bounds));
       }
       else {
         gfx::Rect bounds = cel->bounds();
@@ -120,13 +121,13 @@ protected:
 
       // cancel all the operation?
       if (isCanceled())
-        return;        // Transaction destructor will undo all operations
+        return;        // Tx destructor will undo all operations
     }
 
     // rotate mask
     if (document()->isMaskVisible()) {
       Mask* origMask = document()->mask();
-      base::UniquePtr<Mask> new_mask(new Mask());
+      std::unique_ptr<Mask> new_mask(new Mask());
       const gfx::Rect& origBounds = origMask->bounds();
       int x = 0, y = 0;
 
@@ -153,7 +154,7 @@ protected:
       doc::rotate_image(origMask->bitmap(), new_mask->bitmap(), m_angle);
 
       // Copy new mask
-      api.copyToCurrentMask(new_mask);
+      api.copyToCurrentMask(new_mask.get());
 
       // Regenerate mask
       document()->resetTransformation();
@@ -210,7 +211,7 @@ void RotateCommand::onExecute(Context* context)
                site.layer()->isEditable()) {
         // If we want to rotate the visible mask for the current cel,
         // we can go to MovingPixelsState.
-        if (static_cast<app::Document*>(site.document())->isMaskVisible()) {
+        if (site.document()->isMaskVisible()) {
           // Select marquee tool
           if (tools::Tool* tool = App::instance()->toolBox()
               ->getToolById(tools::WellKnownTools::RectangularMarquee)) {
@@ -243,7 +244,6 @@ void RotateCommand::onExecute(Context* context)
       job.startJob();
       job.waitJob();
     }
-    reader.document()->generateMaskBoundaries();
     update_screen_for_document(reader.document());
   }
 }

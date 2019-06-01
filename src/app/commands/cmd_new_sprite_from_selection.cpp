@@ -1,5 +1,6 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2018-2019  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -10,7 +11,8 @@
 
 #include "app/commands/command.h"
 #include "app/context.h"
-#include "app/document.h"
+#include "app/doc.h"
+#include "app/site.h"
 #include "app/util/new_image_from_mask.h"
 #include "base/fs.h"
 #include "doc/cel.h"
@@ -18,7 +20,6 @@
 #include "doc/layer.h"
 #include "doc/mask.h"
 #include "doc/palette.h"
-#include "doc/site.h"
 #include "doc/sprite.h"
 
 #include <cstdio>
@@ -30,7 +31,6 @@ using namespace doc;
 class NewSpriteFromSelectionCommand : public Command {
 public:
   NewSpriteFromSelectionCommand();
-  Command* clone() const override { return new NewSpriteFromSelectionCommand(*this); }
 
 protected:
   bool onEnabled(Context* context) override;
@@ -51,21 +51,22 @@ bool NewSpriteFromSelectionCommand::onEnabled(Context* context)
 void NewSpriteFromSelectionCommand::onExecute(Context* context)
 {
   const Site site = context->activeSite();
-  const app::Document* doc = static_cast<const app::Document*>(site.document());
+  const Doc* doc = site.document();
   const Sprite* sprite = site.sprite();
   const Mask* mask = doc->mask();
   ImageRef image(
-    new_image_from_mask(site, mask));
+    new_image_from_mask(site, mask, true));
   if (!image)
     return;
 
   Palette* palette = sprite->palette(site.frame());
 
-  base::UniquePtr<Sprite> dstSprite(
-    Sprite::createBasicSprite(image->pixelFormat(),
-                              image->width(),
-                              image->height(),
-                              palette->size()));
+  std::unique_ptr<Sprite> dstSprite(
+    Sprite::createBasicSprite(ImageSpec((ColorMode)image->pixelFormat(),
+                                        image->width(),
+                                        image->height(),
+                                        palette->size(),
+                                        sprite->colorSpace())));
 
   palette->copyColorsTo(dstSprite->palette(frame_t(0)));
 
@@ -75,7 +76,7 @@ void NewSpriteFromSelectionCommand::onExecute(Context* context)
   dstLayer->setFlags(site.layer()->flags()); // Copy all flags
   copy_image(dstLayer->cel(frame_t(0))->image(), image.get());
 
-  base::UniquePtr<Document> dstDoc(new Document(dstSprite));
+  std::unique_ptr<Doc> dstDoc(new Doc(dstSprite.get()));
   dstSprite.release();
   char buf[1024];
   std::sprintf(buf, "%s-%dx%d-%dx%d",

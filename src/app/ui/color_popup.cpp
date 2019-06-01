@@ -16,7 +16,7 @@
 #include "app/console.h"
 #include "app/context.h"
 #include "app/context_access.h"
-#include "app/document.h"
+#include "app/doc.h"
 #include "app/file/palette_file.h"
 #include "app/modules/gfx.h"
 #include "app/modules/gui.h"
@@ -29,7 +29,6 @@
 #include "app/ui_context.h"
 #include "base/bind.h"
 #include "base/scoped_value.h"
-#include "base/unique_ptr.h"
 #include "doc/image_impl.h"
 #include "doc/palette.h"
 #include "doc/sprite.h"
@@ -52,7 +51,7 @@ enum {
   COLOR_MODES
 };
 
-static base::UniquePtr<doc::Palette> g_simplePal(nullptr);
+static std::unique_ptr<doc::Palette> g_simplePal(nullptr);
 
 class ColorPopup::SimpleColors : public HBox {
 public:

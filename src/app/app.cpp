@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018-2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -10,11 +11,13 @@
 
 #include "app/app.h"
 
+#include "app/app_mod.h"
 #include "app/check_update.h"
 #include "app/cli/app_options.h"
 #include "app/cli/cli_processor.h"
 #include "app/cli/default_cli_delegate.h"
 #include "app/cli/preview_cli_delegate.h"
+#include "app/color_spaces.h"
 #include "app/color_utils.h"
 #include "app/commands/commands.h"
 #include "app/console.h"
@@ -35,11 +38,12 @@
 #include "app/recent_files.h"
 #include "app/resource_finder.h"
 #include "app/send_crash.h"
+#include "app/site.h"
 #include "app/tools/active_tool.h"
 #include "app/tools/tool_box.h"
 #include "app/ui/backup_indicator.h"
 #include "app/ui/color_bar.h"
-#include "app/ui/document_view.h"
+#include "app/ui/doc_view.h"
 #include "app/ui/editor/editor.h"
 #include "app/ui/editor/editor_view.h"
 #include "app/ui/input_chain.h"
@@ -50,29 +54,26 @@
 #include "app/ui/workspace.h"
 #include "app/ui_context.h"
 #include "app/util/clipboard.h"
-#include "app/webserver.h"
 #include "base/exception.h"
 #include "base/fs.h"
 #include "base/scoped_lock.h"
 #include "base/split_string.h"
-#include "base/unique_ptr.h"
-#include "doc/site.h"
 #include "doc/sprite.h"
 #include "fmt/format.h"
+#include "os/display.h"
+#include "os/error.h"
+#include "os/surface.h"
+#include "os/system.h"
 #include "render/render.h"
-#include "she/display.h"
-#include "she/error.h"
-#include "she/surface.h"
-#include "she/system.h"
 #include "ui/intern.h"
 #include "ui/ui.h"
 
 #include <iostream>
+#include <memory>
 
 #ifdef ENABLE_SCRIPTING
-  #include "app/script/app_scripting.h"
+  #include "app/script/engine.h"
   #include "app/shell.h"
-  #include "script/engine_delegate.h"
 #endif
 
 #ifdef ENABLE_STEAM
@@ -82,6 +83,23 @@
 namespace app {
 
 using namespace ui;
+
+#ifdef ENABLE_SCRIPTING
+
+namespace {
+
+class ConsoleEngineDelegate : public script::EngineDelegate {
+public:
+  void onConsolePrint(const char* text) override {
+    m_console.printf("%s\n", text);
+  }
+private:
+  Console m_console;
+};
+
+} // anonymous namespace
+
+#endif // ENABLER_SCRIPTING
 
 class App::CoreModules {
 public:
@@ -110,10 +128,8 @@ public:
   Extensions m_extensions;
   // Load main language (after loading the extensions)
   LoadLanguage m_loadLanguage;
-#ifdef ENABLE_UI
   tools::ToolBox m_toolbox;
   tools::ActiveToolManager m_activeToolManager;
-#endif
   Commands m_commands;
   ContextT m_context;
 #ifdef ENABLE_UI
@@ -121,36 +137,56 @@ public:
   InputChain m_inputChain;
   clipboard::ClipboardManager m_clipboardManager;
 #endif
-  // This is a raw pointer because we want to delete this explicitly.
+  // This is a raw pointer because we want to delete it explicitly.
+  // (e.g. if an exception occurs, the ~Modules() doesn't have to
+  // delete m_recovery)
   app::crash::DataRecovery* m_recovery;
 
   Modules(const bool createLogInDesktop,
           Preferences& pref)
     : m_loggerModule(createLogInDesktop)
     , m_loadLanguage(pref, m_extensions)
-#ifdef ENABLE_UI
     , m_activeToolManager(&m_toolbox)
+#ifdef ENABLE_UI
     , m_recent_files(pref.general.recentItems())
 #endif
     , m_recovery(nullptr) {
+  }
+
+  ~Modules() {
+    ASSERT(m_recovery == nullptr);
   }
 
   app::crash::DataRecovery* recovery() {
     return m_recovery;
   }
 
-  bool hasRecoverySessions() const {
-    return m_recovery && !m_recovery->sessions().empty();
-  }
-
   void createDataRecovery() {
 #ifdef ENABLE_DATA_RECOVERY
     m_recovery = new app::crash::DataRecovery(&m_context);
+    m_recovery->SessionsListIsReady.connect(
+      [] {
+        ui::assert_ui_thread();
+        auto app = App::instance();
+        if (app && app->mainWindow()) {
+          // Notify that the list of sessions is ready.
+          app->mainWindow()->dataRecoverySessionsAreReady();
+        }
+      });
+#endif
+  }
+
+  void searchDataRecoverySessions() {
+#ifdef ENABLE_DATA_RECOVERY
+    ASSERT(m_recovery);
+    if (m_recovery)
+      m_recovery->launchSearch();
 #endif
   }
 
   void deleteDataRecovery() {
 #ifdef ENABLE_DATA_RECOVERY
+    ASSERT(m_recovery);
     delete m_recovery;
     m_recovery = nullptr;
 #endif
@@ -158,16 +194,20 @@ public:
 
 };
 
-App* App::m_instance = NULL;
+App* App::m_instance = nullptr;
 
-App::App()
-  : m_coreModules(NULL)
-  , m_modules(NULL)
-  , m_legacy(NULL)
+App::App(AppMod* mod)
+  : m_mod(mod)
+  , m_coreModules(nullptr)
+  , m_modules(nullptr)
+  , m_legacy(nullptr)
   , m_isGui(false)
   , m_isShell(false)
 #ifdef ENABLE_UI
   , m_backupIndicator(nullptr)
+#endif
+#ifdef ENABLE_SCRIPTING
+  , m_engine(new script::Engine)
 #endif
 {
   ASSERT(m_instance == NULL);
@@ -187,7 +227,7 @@ void App::initialize(const AppOptions& options)
 #ifdef _WIN32
   if (options.disableWintab() ||
       !preferences().experimental.loadWintabDriver()) {
-    she::instance()->useWintabAPI(false);
+    os::instance()->useWintabAPI(false);
   }
 #endif
 
@@ -207,6 +247,8 @@ void App::initialize(const AppOptions& options)
       createLogInDesktop = true;
       break;
   }
+
+  initialize_color_spaces();
 
   // Load modules
   m_modules = new Modules(createLogInDesktop, preferences());
@@ -242,16 +284,18 @@ void App::initialize(const AppOptions& options)
 
     ui::Manager::getDefault()->invalidate();
 
-    // Create the main window and show it.
+    // Create the main window.
     m_mainWindow.reset(new MainWindow);
+    if (m_mod)
+      m_mod->modMainWindow(m_mainWindow.get());
+
+    // Data recovery is enabled only in GUI mode
+    if (preferences().general.dataRecovery())
+      m_modules->searchDataRecoverySessions();
 
     // Default status of the main window.
     app_rebuild_documents_tabs();
     app_default_statusbar_message();
-
-    // Recover data
-    if (m_modules->hasRecoverySessions())
-      m_mainWindow->showDataRecovery(m_modules->recovery());
 
     m_mainWindow->openWindow();
 
@@ -263,7 +307,7 @@ void App::initialize(const AppOptions& options)
   // Process options
   LOG("APP: Processing options...\n");
   {
-    base::UniquePtr<CliDelegate> delegate;
+    std::unique_ptr<CliDelegate> delegate;
     if (options.previewCLI())
       delegate.reset(new PreviewCliDelegate);
     else
@@ -273,7 +317,7 @@ void App::initialize(const AppOptions& options)
     cli.process(&m_modules->m_context);
   }
 
-  she::instance()->finishLaunching();
+  os::instance()->finishLaunching();
 }
 
 void App::run()
@@ -291,14 +335,14 @@ void App::run()
 #if !defined(_WIN32) && !defined(__APPLE__)
     // Setup app icon for Linux window managers
     try {
-      she::Display* display = she::instance()->defaultDisplay();
-      she::SurfaceList icons;
+      os::Display* display = os::instance()->defaultDisplay();
+      os::SurfaceList icons;
 
       for (const int size : { 32, 64, 128 }) {
         ResourceFinder rf;
         rf.includeDataDir(fmt::format("icons/ase{0}.png", size).c_str());
         if (rf.findFirst()) {
-          she::Surface* surf = she::instance()->loadRgbaSurface(rf.filename().c_str());
+          os::Surface* surf = os::instance()->loadRgbaSurface(rf.filename().c_str());
           if (surf)
             icons.push_back(surf);
         }
@@ -319,13 +363,13 @@ void App::run()
 #ifdef ENABLE_STEAM
     steam::SteamAPI steam;
     if (steam.initialized())
-      she::instance()->activateApp();
+      os::instance()->activateApp();
 #endif
 
 #if ENABLE_DEVMODE
     // On OS X, when we compile Aseprite on devmode, we're using it
     // outside an app bundle, so we must active the app explicitly.
-    she::instance()->activateApp();
+    os::instance()->activateApp();
 #endif
 
 #ifdef ENABLE_UPDATER
@@ -335,14 +379,17 @@ void App::run()
     checkUpdate.launch();
 #endif
 
-#ifdef ENABLE_WEBSERVER
-    // Launch the webserver.
-    app::WebServer webServer;
-    webServer.start();
-#endif
-
     app::SendCrash sendCrash;
     sendCrash.search();
+
+    // Keep the console alive the whole program execute (just in case
+    // we've to print errors).
+    Console console;
+#ifdef ENABLE_SCRIPTING
+    // Use the app::Console() for script erros
+    ConsoleEngineDelegate delegate;
+    script::ScopedEngineDelegate setEngineDelegate(m_engine.get(), &delegate);
+#endif
 
     // Run the GUI main message loop
     ui::Manager::getDefault()->run();
@@ -352,30 +399,28 @@ void App::run()
 #ifdef ENABLE_SCRIPTING
   // Start shell to execute scripts.
   if (m_isShell) {
-    script::StdoutEngineDelegate delegate;
-    AppScripting engine(&delegate);
-    engine.printLastResult();
+    m_engine->printLastResult(); // TODO is this needed?
     Shell shell;
-    shell.run(engine);
+    shell.run(*m_engine);
   }
 #endif  // ENABLE_SCRIPTING
 
   // Destroy all documents in the UIContext.
-  const doc::Documents& docs = m_modules->m_context.documents();
+  const Docs& docs = m_modules->m_context.documents();
   while (!docs.empty()) {
-    doc::Document* doc = docs.back();
+    Doc* doc = docs.back();
 
     // First we close the document. In this way we receive recent
-    // notifications related to the document as an app::Document. If
-    // we delete the document directly, we destroy the app::Document
+    // notifications related to the document as a app::Doc. If
+    // we delete the document directly, we destroy the app::Doc
     // too early, and then doc::~Document() call
-    // DocumentsObserver::onRemoveDocument(). In this way, observers
-    // could think that they have a fully created app::Document when
+    // DocsObserver::onRemoveDocument(). In this way, observers
+    // could think that they have a fully created app::Doc when
     // in reality it's a doc::Document (in the middle of a
     // destruction process).
     //
     // TODO: This problem is because we're extending doc::Document,
-    // in the future, we should remove app::Document.
+    // in the future, we should remove app::Doc.
     doc->close();
     delete doc;
   }
@@ -384,12 +429,12 @@ void App::run()
   if (isGui()) {
     // Destroy the window.
     m_mainWindow.reset(NULL);
+
+    // Delete backups (this is a normal shutdown, we are not handling
+    // exceptions, and we are not in a destructor).
+    m_modules->deleteDataRecovery();
   }
 #endif
-
-  // Delete backups (this is a normal shutdown, we are not handling
-  // exceptions, and we are not in a destructor).
-  m_modules->deleteDataRecovery();
 }
 
 // Finishes the Aseprite application.
@@ -398,6 +443,11 @@ App::~App()
   try {
     LOG("APP: Exit\n");
     ASSERT(m_instance == this);
+
+#ifdef ENABLE_SCRIPTING
+    // Destroy scripting engine
+    m_engine.reset(nullptr);
+#endif
 
     // Delete file formats.
     FileFormatsManager::destroyInstance();
@@ -420,6 +470,14 @@ App::~App()
 
     delete m_legacy;
     delete m_modules;
+
+    // Save preferences only if we are running in GUI mode.  when we
+    // run in batch mode we might want to reset some preferences so
+    // the scripts have a reproducible behavior. Those reset
+    // preferences must not be saved.
+    if (isGui())
+      m_coreModules->m_preferences.save();
+
     delete m_coreModules;
 
 #ifdef ENABLE_UI
@@ -432,12 +490,12 @@ App::~App()
   }
   catch (const std::exception& e) {
     LOG(ERROR) << "APP: Error: " << e.what() << "\n";
-    she::error_message(e.what());
+    os::error_message(e.what());
 
     // no re-throw
   }
   catch (...) {
-    she::error_message("Error closing " PACKAGE ".\n(uncaught exception)");
+    os::error_message("Error closing " PACKAGE ".\n(uncaught exception)");
 
     // no re-throw
   }
@@ -464,29 +522,17 @@ bool App::isPortable()
 tools::ToolBox* App::toolBox() const
 {
   ASSERT(m_modules != NULL);
-#ifdef ENABLE_UI
   return &m_modules->m_toolbox;
-#else
-  return nullptr;
-#endif
 }
 
 tools::Tool* App::activeTool() const
 {
-#ifdef ENABLE_UI
   return m_modules->m_activeToolManager.activeTool();
-#else
-  return nullptr;
-#endif
 }
 
 tools::ActiveToolManager* App::activeToolManager() const
 {
-#ifdef ENABLE_UI
   return &m_modules->m_activeToolManager;
-#else
-  return nullptr;
-#endif
 }
 
 RecentFiles* App::recentFiles() const
@@ -546,7 +592,7 @@ void App::showNotification(INotificationDelegate* del)
 
 void App::showBackupNotification(bool state)
 {
-  base::scoped_lock lock(m_backupIndicatorMutex);
+  assert_ui_thread();
   if (state) {
     if (!m_backupIndicator)
       m_backupIndicator = new BackupIndicator;
@@ -563,7 +609,7 @@ void App::updateDisplayTitleBar()
   std::string defaultTitle = PACKAGE " v" VERSION;
   std::string title;
 
-  DocumentView* docView = UIContext::instance()->activeView();
+  DocView* docView = UIContext::instance()->activeView();
   if (docView) {
     // Prepend the document's filename.
     title += docView->document()->name();
@@ -571,7 +617,7 @@ void App::updateDisplayTitleBar()
   }
 
   title += defaultTitle;
-  she::instance()->defaultDisplay()->setTitleBar(title);
+  os::instance()->defaultDisplay()->setTitleBar(title);
 }
 
 InputChain& App::inputChain()
@@ -580,8 +626,7 @@ InputChain& App::inputChain()
 }
 #endif
 
-// Updates palette and redraw the screen.
-void app_refresh_screen()
+void app_update_current_palette()
 {
 #ifdef ENABLE_UI
   Context* context = UIContext::instance();
@@ -592,7 +637,15 @@ void app_refresh_screen()
   if (Palette* pal = site.palette())
     set_current_palette(pal, false);
   else
-    set_current_palette(NULL, false);
+    set_current_palette(nullptr, false);
+#endif // ENABLE_UI
+}
+
+// Updates palette and redraw the screen.
+void app_refresh_screen()
+{
+#ifdef ENABLE_UI
+  app_update_current_palette();
 
   // Invalidate the whole screen.
   ui::Manager::getDefault()->invalidate();
@@ -614,18 +667,14 @@ void app_rebuild_documents_tabs()
 
 PixelFormat app_get_current_pixel_format()
 {
-#ifdef ENABLE_UI
-  Context* context = UIContext::instance();
-  ASSERT(context != NULL);
+  Context* ctx = App::instance()->context();
+  ASSERT(ctx);
 
-  Document* document = context->activeDocument();
-  if (document != NULL)
-    return document->sprite()->pixelFormat();
+  Doc* doc = ctx->activeDocument();
+  if (doc)
+    return doc->sprite()->pixelFormat();
   else
     return IMAGE_RGB;
-#else // ENABLE_UI
-  return IMAGE_RGB;
-#endif
 }
 
 void app_default_statusbar_message()

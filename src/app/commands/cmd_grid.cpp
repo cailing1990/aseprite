@@ -12,7 +12,7 @@
 #include "app/commands/command.h"
 #include "app/context.h"
 #include "app/context_access.h"
-#include "app/document.h"
+#include "app/doc.h"
 #include "app/find_widget.h"
 #include "app/load_widget.h"
 #include "app/modules/editors.h"
@@ -36,8 +36,6 @@ public:
     : Command(CommandId::SnapToGrid(), CmdUIOnlyFlag) {
   }
 
-  Command* clone() const override { return new SnapToGridCommand(*this); }
-
 protected:
   bool onChecked(Context* ctx) override {
     DocumentPreferences& docPref = Preferences::instance().document(ctx->activeDocument());
@@ -59,8 +57,6 @@ public:
     : Command(CommandId::SelectionAsGrid(), CmdUIOnlyFlag) {
   }
 
-  Command* clone() const override { return new SelectionAsGridCommand(*this); }
-
 protected:
   bool onEnabled(Context* ctx) override {
     return (ctx->activeDocument() &&
@@ -69,7 +65,7 @@ protected:
 
   void onExecute(Context* ctx) override {
     const ContextReader reader(ctx);
-    const Document* document = reader.document();
+    const Doc* document = reader.document();
     const Mask* mask(document->mask());
     DocumentPreferences& docPref =
       Preferences::instance().document(ctx->activeDocument());
@@ -85,7 +81,6 @@ protected:
 class GridSettingsCommand : public Command {
 public:
   GridSettingsCommand();
-  Command* clone() const override { return new GridSettingsCommand(*this); }
 
 protected:
   bool onEnabled(Context* context) override;

@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2016  David Capello
+// Copyright (C) 2016-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -10,9 +10,9 @@
 
 #include "app/cmd/set_pixel_ratio.h"
 
-#include "doc/document.h"
-#include "doc/document_event.h"
-#include "doc/document_observer.h"
+#include "app/doc.h"
+#include "app/doc_event.h"
+#include "app/doc_observer.h"
 #include "doc/sprite.h"
 
 namespace app {
@@ -44,9 +44,10 @@ void SetPixelRatio::onUndo()
 void SetPixelRatio::onFireNotifications()
 {
   Sprite* sprite = this->sprite();
-  DocumentEvent ev(sprite->document());
+  Doc* doc = static_cast<Doc*>(sprite->document());
+  DocEvent ev(doc);
   ev.sprite(sprite);
-  sprite->document()->notify_observers<DocumentEvent&>(&DocumentObserver::onSpritePixelRatioChanged, ev);
+  doc->notify_observers<DocEvent&>(&DocObserver::onSpritePixelRatioChanged, ev);
 }
 
 } // namespace cmd

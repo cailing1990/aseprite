@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (c) 2018  Igara Studio S.A.
 // Copyright (C) 2016-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -10,8 +11,9 @@
 
 #include "app/color.h"
 #include "app/ui/color_source.h"
+#include "obs/connection.h"
 #include "obs/signal.h"
-#include "she/surface.h"
+#include "os/surface.h"
 #include "ui/mouse_buttons.h"
 #include "ui/timer.h"
 #include "ui/widget.h"
@@ -64,7 +66,7 @@ namespace app {
     virtual app::Color getBottomBarColor(const int u, const int umax) = 0;
     virtual void onPaintMainArea(ui::Graphics* g, const gfx::Rect& rc) = 0;
     virtual void onPaintBottomBar(ui::Graphics* g, const gfx::Rect& rc) = 0;
-    virtual void onPaintSurfaceInBgThread(she::Surface* s,
+    virtual void onPaintSurfaceInBgThread(os::Surface* s,
                                           const gfx::Rect& main,
                                           const gfx::Rect& bottom,
                                           const gfx::Rect& alpha,
@@ -91,6 +93,8 @@ namespace app {
     gfx::Rect bottomBarBounds() const;
     gfx::Rect alphaBarBounds() const;
 
+    void updateColorSpace();
+
     // Internal flag used to lock the modification of m_color.
     // E.g. When the user picks a color harmony, we don't want to
     // change the main color.
@@ -104,6 +108,8 @@ namespace app {
     bool m_capturedInAlpha;
 
     ui::Timer m_timer;
+
+    obs::scoped_connection m_appConn;
   };
 
 } // namespace app

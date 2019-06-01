@@ -1,4 +1,5 @@
 // Aseprite UI Library
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2017  David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -16,6 +17,12 @@
 
 namespace ui {
   class ScrollRegionEvent;
+
+  class ViewableWidget {
+  public:
+    virtual ~ViewableWidget() { }
+    virtual void onScrollRegion(ScrollRegionEvent& ev) = 0;
+  };
 
   class View : public Widget
              , public ScrollableViewDelegate {
@@ -35,21 +42,22 @@ namespace ui {
 
     // Returns the maximum viewable size requested by the attached
     // widget in the viewport.
-    gfx::Size getScrollableSize();
-    void setScrollableSize(const gfx::Size& sz);
+    gfx::Size getScrollableSize() const;
+    void setScrollableSize(const gfx::Size& sz,
+                           const bool setScrollPos = true);
 
     // Returns the visible/available size to see the attached widget.
     gfx::Size visibleSize() const override;
     gfx::Point viewScroll() const override;
     void setViewScroll(const gfx::Point& pt) override;
 
-    void updateView();
+    void updateView(const bool restoreScrollPos = true);
 
     Viewport* viewport();
     gfx::Rect viewportBounds();
 
     // For viewable widgets
-    static View* getView(Widget* viewableWidget);
+    static View* getView(const Widget* viewableWidget);
 
   protected:
     // Events
@@ -63,6 +71,9 @@ namespace ui {
     virtual void onScrollChange();
 
   private:
+    void updateAttachedWidgetBounds(const gfx::Point& scrollPos);
+    gfx::Point limitScrollPosToViewport(const gfx::Point& pt) const;
+
     bool m_hasBars;
     Viewport m_viewport;
     ScrollBar m_scrollbar_h;

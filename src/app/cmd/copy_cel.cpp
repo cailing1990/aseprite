@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2016  David Capello
 //
 // This program is distributed under the terms of
@@ -17,7 +18,7 @@
 #include "app/cmd/remove_cel.h"
 #include "app/cmd/set_cel_data.h"
 #include "app/cmd/unlink_cel.h"
-#include "app/document.h"
+#include "app/doc.h"
 #include "app/util/create_cel_copy.h"
 #include "doc/cel.h"
 #include "doc/layer.h"
@@ -110,10 +111,8 @@ void CopyCel::onExecute()
       executeAndAdd(new cmd::RemoveCel(dstCel));
 
     if (srcCel) {
-      if (createLink) {
-        dstCel = Cel::createLink(srcCel);
-        dstCel->setFrame(m_dstFrame);
-      }
+      if (createLink)
+        dstCel = Cel::MakeLink(m_dstFrame, srcCel);
       else
         dstCel = create_cel_copy(srcCel, dstSprite, dstLayer, m_dstFrame);
 
@@ -129,7 +128,7 @@ void CopyCel::onFireNotifications()
   ASSERT(m_srcLayer.layer());
   ASSERT(m_dstLayer.layer());
 
-  static_cast<app::Document*>(m_dstLayer.layer()->sprite()->document())
+  static_cast<Doc*>(m_dstLayer.layer()->sprite()->document())
     ->notifyCelCopied(
       m_srcLayer.layer(), m_srcFrame,
       m_dstLayer.layer(), m_dstFrame);

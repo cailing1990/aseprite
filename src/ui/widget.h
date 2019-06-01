@@ -1,4 +1,5 @@
 // Aseprite UI Library
+// Copyright (C) 2018-2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -25,7 +26,7 @@
 
 #define ASSERT_VALID_WIDGET(widget) ASSERT((widget) != NULL)
 
-namespace she {
+namespace os {
   class Font;
 }
 
@@ -137,7 +138,7 @@ namespace ui {
     // LOOK & FEEL
     // ===============================================================
 
-    she::Font* font() const;
+    os::Font* font() const;
 
     // Gets the background color of the widget.
     gfx::Color bgColor() const {
@@ -164,15 +165,11 @@ namespace ui {
     Widget* parent() const { return m_parent; }
     Manager* manager() const;
 
-    // Returns a list of parents, if "ascendant" is true the list is
-    // build from child to parents, else the list is from parent to
-    // children.
-    void getParents(bool ascendant, WidgetsList& parents);
-
     // Returns a list of children.
     const WidgetsList& children() const { return m_children; }
 
     Widget* at(int index) { return m_children[index]; }
+    int getChildIndex(Widget* child);
 
     // Returns the first/last child or NULL if it doesn't exist.
     Widget* firstChild() {
@@ -216,6 +213,7 @@ namespace ui {
     void removeAllChildren();
     void replaceChild(Widget* oldChild, Widget* newChild);
     void insertChild(int index, Widget* child);
+    void moveChildTo(Widget* thisChild, Widget* toThisPosition);
 
     // ===============================================================
     // LAYOUT & CONSTRAINT
@@ -340,10 +338,10 @@ namespace ui {
     void captureMouse();
     void releaseMouse();
 
-    bool hasFocus() const;
-    bool hasMouse() const;
+    bool hasFocus() const { return hasFlags(HAS_FOCUS); }
+    bool hasMouse() const { return hasFlags(HAS_MOUSE); }
+    bool hasCapture() const { return hasFlags(HAS_CAPTURE); }
     bool hasMouseOver() const;
-    bool hasCapture() const;
 
     // Offer the capture to widgets of the given type. Returns true if
     // the capture was passed to other widget.
@@ -399,6 +397,7 @@ namespace ui {
                const bool isBg);
     bool paintEvent(Graphics* graphics,
                     const bool isBg);
+    void setDirtyFlag();
 
     WidgetType m_type;           // Widget's type
     std::string m_id;            // Widget's id
@@ -406,7 +405,7 @@ namespace ui {
     Theme* m_theme;              // Widget's theme
     Style* m_style;
     std::string m_text;          // Widget text
-    mutable she::Font* m_font;   // Cached font returned by the theme
+    mutable os::Font* m_font;    // Cached font returned by the theme
     gfx::Color m_bgColor;        // Background color
     gfx::Rect m_bounds;
     gfx::Region m_updateRegion;   // Region to be redrawed.

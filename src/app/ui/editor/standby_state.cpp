@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018-2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -16,7 +17,7 @@
 #include "app/commands/cmd_eyedropper.h"
 #include "app/commands/commands.h"
 #include "app/commands/params.h"
-#include "app/document_range.h"
+#include "app/doc_range.h"
 #include "app/ini_file.h"
 #include "app/pref/preferences.h"
 #include "app/tools/active_tool.h"
@@ -24,7 +25,7 @@
 #include "app/tools/pick_ink.h"
 #include "app/tools/tool.h"
 #include "app/ui/app_menuitem.h"
-#include "app/ui/document_view.h"
+#include "app/ui/doc_view.h"
 #include "app/ui/editor/drawing_state.h"
 #include "app/ui/editor/editor.h"
 #include "app/ui/editor/editor_customization_delegate.h"
@@ -56,8 +57,8 @@
 #include "doc/sprite.h"
 #include "fixmath/fixmath.h"
 #include "gfx/rect.h"
-#include "she/surface.h"
-#include "she/system.h"
+#include "os/surface.h"
+#include "os/system.h"
 #include "ui/alert.h"
 #include "ui/message.h"
 #include "ui/system.h"
@@ -132,11 +133,29 @@ bool StandbyState::onMouseDown(Editor* editor, MouseMessage* msg)
   tools::Ink* clickedInk = editor->getCurrentEditorInk();
   Site site;
   editor->getSite(&site);
-  app::Document* document = static_cast<app::Document*>(site.document());
+  Doc* document = site.document();
   Layer* layer = site.layer();
 
   // When an editor is clicked the current view is changed.
-  context->setActiveView(editor->getDocumentView());
+  context->setActiveView(editor->getDocView());
+
+  // Move symmetry
+  Decorator::Handles handles;
+  if (m_decorator->getSymmetryHandles(editor, handles)) {
+    for (const auto& handle : handles) {
+      if (handle.bounds.contains(msg->position())) {
+        auto mode = (handle.align & (TOP | BOTTOM) ? app::gen::SymmetryMode::HORIZONTAL:
+                                                     app::gen::SymmetryMode::VERTICAL);
+        bool horz = (mode == app::gen::SymmetryMode::HORIZONTAL);
+        auto& symmetry = Preferences::instance().document(editor->document()).symmetry;
+        auto& axis = (horz ? symmetry.xAxis:
+                             symmetry.yAxis);
+        editor->setState(
+          EditorStatePtr(new MovingSymmetryState(editor, msg, mode, axis)));
+        return true;
+      }
+    }
+  }
 
   // Start scroll loop
   if (editor->checkForScroll(msg) ||
@@ -195,7 +214,7 @@ bool StandbyState::onMouseDown(Editor* editor, MouseMessage* msg)
               editor, msg, handle, collect);
             editor->setState(EditorStatePtr(newState));
           }
-          catch (const LockedDocumentException&) {
+          catch (const LockedDocException&) {
             // TODO break the background task that is locking this sprite
             StatusBar::instance()->showTip(
               1000, "Sprite is used by a backup/data recovery task");
@@ -220,14 +239,29 @@ bool StandbyState::onMouseDown(Editor* editor, MouseMessage* msg)
       case EditorHit::SliceBounds:
       case EditorHit::SliceCenter:
         if (msg->left()) {
-          MovingSliceState* newState = new MovingSliceState(editor, msg, hit);
+          // If we click outside all slices, we clear the selection of slices.
+          if (!hit.slice() || !site.selectedSlices().contains(hit.slice()->id())) {
+            editor->clearSlicesSelection();
+            editor->selectSlice(hit.slice());
+
+            site = Site();
+            editor->getSite(&site);
+          }
+
+          MovingSliceState* newState = new MovingSliceState(
+            editor, msg, hit, site.selectedSlices());
           editor->setState(EditorStatePtr(newState));
         }
         else {
           Menu* popupMenu = AppMenus::instance()->getSlicePopupMenu();
           if (popupMenu) {
             Params params;
-            params.set("id", base::convert_to<std::string>(hit.slice()->id()).c_str());
+            // When the editor doesn't have a set of selected slices,
+            // we set the specific clicked slice for the commands (in
+            // other case, those commands will get the selected set of
+            // slices from Site::selectedSlices() field).
+            if (!editor->hasSelectedSlices())
+              params.set("id", base::convert_to<std::string>(hit.slice()->id()).c_str());
             AppMenuItem::setContextParams(params);
             popupMenu->showPopup(msg->position());
             AppMenuItem::setContextParams(Params());
@@ -297,24 +331,6 @@ bool StandbyState::onMouseDown(Editor* editor, MouseMessage* msg)
     }
   }
 
-  // Move symmetry
-  Decorator::Handles handles;
-  if (m_decorator->getSymmetryHandles(editor, handles)) {
-    for (const auto& handle : handles) {
-      if (handle.bounds.contains(msg->position())) {
-        auto mode = (handle.align & (TOP | BOTTOM) ? app::gen::SymmetryMode::HORIZONTAL:
-                                                     app::gen::SymmetryMode::VERTICAL);
-        bool horz = (mode == app::gen::SymmetryMode::HORIZONTAL);
-        auto& symmetry = Preferences::instance().document(editor->document()).symmetry;
-        auto& axis = (horz ? symmetry.xAxis:
-                             symmetry.yAxis);
-        editor->setState(
-          EditorStatePtr(new MovingSymmetryState(editor, msg, mode, axis)));
-        return true;
-      }
-    }
-  }
-
   // Start the Tool-Loop
   if (layer && (layer->isImage() || clickedInk->isSelection())) {
     // Shift+click on Pencil tool starts a line onMouseDown() when the
@@ -377,7 +393,8 @@ bool StandbyState::onDoubleClick(Editor* editor, MouseMessage* msg)
   tools::Ink* ink = editor->getCurrentEditorInk();
 
   // Select a tile with double-click
-  if (ink->isSelection()) {
+  if (ink->isSelection() &&
+      Preferences::instance().selection.doubleclickSelectTile()) {
     Command* selectTileCmd =
       Commands::instance()->byId(CommandId::SelectTile());
 
@@ -386,9 +403,22 @@ bool StandbyState::onDoubleClick(Editor* editor, MouseMessage* msg)
       params.set("mode", "add");
     else if (int(editor->getToolLoopModifiers()) & int(tools::ToolLoopModifiers::kSubtractSelection))
       params.set("mode", "subtract");
+    else if (int(editor->getToolLoopModifiers()) & int(tools::ToolLoopModifiers::kIntersectSelection))
+      params.set("mode", "intersect");
 
     UIContext::instance()->executeCommand(selectTileCmd, params);
     return true;
+  }
+  // Show slice properties when we double-click it
+  else if (ink->isSlice()) {
+    EditorHit hit = editor->calcHit(msg->position());
+    if (hit.slice()) {
+      Command* cmd = Commands::instance()->byId(CommandId::SliceProperties());
+      Params params;
+      params.set("id", base::convert_to<std::string>(hit.slice()->id()).c_str());
+      UIContext::instance()->executeCommand(cmd, params);
+      return true;
+    }
   }
 
   return false;
@@ -521,7 +551,7 @@ bool StandbyState::onUpdateStatusBar(Editor* editor)
     - gfx::PointF(editor->mainTilePosition());
 
   if (!sprite) {
-    StatusBar::instance()->clearText();
+    StatusBar::instance()->showDefaultText();
   }
   // For eye-dropper
   else if (ink->isEyedropper()) {
@@ -546,12 +576,16 @@ bool StandbyState::onUpdateStatusBar(Editor* editor)
 
     char buf[1024];
     sprintf(
-      buf, ":pos: %d %d :%s: %d %d",
-      int(std::floor(spritePos.x)),
-      int(std::floor(spritePos.y)),
-      (mask ? "selsize": "size"),
-      (mask ? mask->bounds().w: sprite->width()),
-      (mask ? mask->bounds().h: sprite->height()));
+            buf, ":pos: %d %d :size: %d %d",
+            int(std::floor(spritePos.x)),
+            int(std::floor(spritePos.y)),
+            sprite->width(),
+            sprite->height());
+
+    if (mask)
+      sprintf(buf+std::strlen(buf), " :selsize: %d %d",
+              mask->bounds().w,
+              mask->bounds().h);
 
     if (sprite->totalFrames() > 1) {
       sprintf(
@@ -563,10 +597,11 @@ bool StandbyState::onUpdateStatusBar(Editor* editor)
 
     if (editor->docPref().show.grid()) {
       auto gb = editor->docPref().grid.bounds();
-      int col = int((std::floor(spritePos.x) - (gb.x % gb.w)) / gb.w);
-      int row = int((std::floor(spritePos.y) - (gb.y % gb.h)) / gb.h);
-      sprintf(
-        buf+std::strlen(buf), " :grid: %d %d", col, row);
+      if (!gb.isEmpty()) {
+        int col = int((std::floor(spritePos.x) - (gb.x % gb.w)) / gb.w);
+        int row = int((std::floor(spritePos.y) - (gb.y % gb.h)) / gb.h);
+        sprintf(buf+std::strlen(buf), " :grid: %d %d", col, row);
+      }
     }
 
     if (editor->docPref().show.slices()) {
@@ -631,7 +666,8 @@ bool StandbyState::checkStartDrawingStraightLine(Editor* editor,
                                                  const ui::MouseMessage* msg)
 {
   // Start line preview with shift key
-  if (editor->startStraightLineWithFreehandTool(msg)) {
+  if (canCheckStartDrawingStraightLine() &&
+      editor->startStraightLineWithFreehandTool(msg)) {
     tools::Pointer::Button pointerButton =
       (msg ? button_from_msg(msg): tools::Pointer::Left);
 
@@ -676,15 +712,15 @@ void StandbyState::startSelectionTransformation(Editor* editor,
 void StandbyState::startFlipTransformation(Editor* editor, doc::algorithm::FlipType flipType)
 {
   transformSelection(editor, NULL, NoHandle);
-  
+
   if (MovingPixelsState* movingPixels = dynamic_cast<MovingPixelsState*>(editor->getState().get()))
     movingPixels->flip(flipType);
 }
-  
+
 void StandbyState::transformSelection(Editor* editor, MouseMessage* msg, HandleType handle)
 {
-  Document* document = editor->document();
-  for (auto docView : UIContext::instance()->getAllDocumentViews(document)) {
+  Doc* document = editor->document();
+  for (auto docView : UIContext::instance()->getAllDocViews(document)) {
     if (docView->editor()->isMovingPixels()) {
       // TODO Transfer moving pixels state to this editor
       docView->editor()->dropMovingPixels();
@@ -712,12 +748,13 @@ void StandbyState::transformSelection(Editor* editor, MouseMessage* msg, HandleT
     editor->brushPreview().hide();
 
     EditorCustomizationDelegate* customization = editor->getCustomizationDelegate();
-    base::UniquePtr<Image> tmpImage(new_image_from_mask(editor->getSite()));
+    std::unique_ptr<Image> tmpImage(new_image_from_mask(editor->getSite(),
+                                                        Preferences::instance().experimental.newBlend()));
 
     PixelsMovementPtr pixelsMovement(
       new PixelsMovement(UIContext::instance(),
                          editor->getSite(),
-                         tmpImage,
+                         tmpImage.get(),
                          document->mask(),
                          "Transformation"));
 
@@ -730,7 +767,7 @@ void StandbyState::transformSelection(Editor* editor, MouseMessage* msg, HandleT
 
     editor->setState(EditorStatePtr(new MovingPixelsState(editor, msg, pixelsMovement, handle)));
   }
-  catch (const LockedDocumentException&) {
+  catch (const LockedDocException&) {
     // Other editor is locking the document.
 
     // TODO steal the PixelsMovement of the other editor and use it for this one.
@@ -845,7 +882,7 @@ bool StandbyState::Decorator::onSetCursor(tools::Ink* ink, Editor* editor, const
       ink->isSelection() &&
       editor->document()->isMaskVisible() &&
       (!Preferences::instance().selection.modifiersDisableHandles() ||
-       she::instance()->keyModifiers() == kKeyNoneModifier)) {
+       os::instance()->keyModifiers() == kKeyNoneModifier)) {
     auto theme = skin::SkinTheme::instance();
     const Transformation transformation(m_standbyState->getTransformation(editor));
     TransformHandles* tr = getTransformHandles(editor);
@@ -967,7 +1004,7 @@ void StandbyState::Decorator::postRenderDecorator(EditorPostRender* render)
   Handles handles;
   if (StandbyState::Decorator::getSymmetryHandles(editor, handles)) {
     skin::SkinTheme* theme = static_cast<skin::SkinTheme*>(ui::get_theme());
-    she::Surface* part = theme->parts.transformationHandle()->bitmap(0);
+    os::Surface* part = theme->parts.transformationHandle()->bitmap(0);
     ScreenGraphics g;
     for (const auto& handle : handles)
       g.drawRgbaSurface(part, handle.bounds.x, handle.bounds.y);
@@ -998,7 +1035,7 @@ bool StandbyState::Decorator::getSymmetryHandles(Editor* editor, Handles& handle
                              editor->canvasSize());
       gfx::RectF editorViewport(View::getView(editor)->viewportBounds());
       skin::SkinTheme* theme = static_cast<skin::SkinTheme*>(ui::get_theme());
-      she::Surface* part = theme->parts.transformationHandle()->bitmap(0);
+      os::Surface* part = theme->parts.transformationHandle()->bitmap(0);
 
       if (int(mode) & int(app::gen::SymmetryMode::HORIZONTAL)) {
         double pos = symmetry.xAxis();

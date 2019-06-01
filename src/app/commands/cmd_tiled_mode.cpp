@@ -20,7 +20,6 @@ namespace app {
 class TiledModeCommand : public Command {
 public:
   TiledModeCommand();
-  Command* clone() const override { return new TiledModeCommand(*this); }
 
 protected:
   void onLoadParams(const Params& params) override;
@@ -55,13 +54,13 @@ bool TiledModeCommand::onEnabled(Context* ctx)
 
 bool TiledModeCommand::onChecked(Context* ctx)
 {
-  const Document* doc = ctx->activeDocument();
+  const Doc* doc = ctx->activeDocument();
   return (Preferences::instance().document(doc).tiled.mode() == m_mode);
 }
 
 void TiledModeCommand::onExecute(Context* ctx)
 {
-  const Document* doc = ctx->activeDocument();
+  const Doc* doc = ctx->activeDocument();
   Preferences::instance().document(doc).tiled.mode(m_mode);
 }
 

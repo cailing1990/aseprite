@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2017  David Capello
+// Copyright (C) 2017-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -11,7 +11,7 @@
 #include "app/context.h"
 #include "app/context_access.h"
 #include "app/job.h"
-#include "app/transaction.h"
+#include "app/tx.h"
 #include "render/task_delegate.h"
 
 #include <functional>
@@ -25,9 +25,9 @@ public:
   ~SpriteJob();
 
   ContextWriter& writer() { return m_writer; }
-  Document* document() const { return m_document; }
+  Doc* document() const { return m_document; }
   Sprite* sprite() const { return m_sprite; }
-  Transaction& transaction() { return m_transaction; }
+  Tx& tx() { return m_tx; }
 
   template<typename T>
   void startJobWithCallback(T&& callback) {
@@ -45,9 +45,9 @@ private:
   void notifyTaskProgress(double progress) override;
 
   ContextWriter m_writer;
-  Document* m_document;
+  Doc* m_document;
   Sprite* m_sprite;
-  Transaction m_transaction;
+  Tx m_tx;
 
   // Default implementation calls the given function in
   // startJob(). Anyway you can just extended the SpriteJob and

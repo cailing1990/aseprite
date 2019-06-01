@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018-2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -12,16 +13,18 @@
 
 #include "app/app.h"
 #include "app/app_menus.h"
+#include "app/cmd_transaction.h"
 #include "app/color_utils.h"
 #include "app/commands/command.h"
 #include "app/commands/commands.h"
 #include "app/commands/params.h"
 #include "app/console.h"
 #include "app/context_access.h"
-#include "app/document.h"
-#include "app/document_api.h"
-#include "app/document_range_ops.h"
-#include "app/document_undo.h"
+#include "app/doc.h"
+#include "app/doc_api.h"
+#include "app/doc_event.h"
+#include "app/doc_range_ops.h"
+#include "app/doc_undo.h"
 #include "app/loop_tag.h"
 #include "app/modules/editors.h"
 #include "app/modules/gfx.h"
@@ -30,7 +33,7 @@
 #include "app/transaction.h"
 #include "app/ui/app_menuitem.h"
 #include "app/ui/configure_timeline_popup.h"
-#include "app/ui/document_view.h"
+#include "app/ui/doc_view.h"
 #include "app/ui/editor/editor.h"
 #include "app/ui/input_chain.h"
 #include "app/ui/skin/skin_theme.h"
@@ -41,18 +44,17 @@
 #include "app/util/layer_boundaries.h"
 #include "app/util/readable_time.h"
 #include "base/bind.h"
+#include "base/clamp.h"
 #include "base/convert_to.h"
 #include "base/memory.h"
 #include "base/scoped_value.h"
-#include "base/unique_ptr.h"
 #include "doc/doc.h"
-#include "doc/document_event.h"
 #include "doc/frame_tag.h"
 #include "gfx/point.h"
 #include "gfx/rect.h"
-#include "she/font.h"
-#include "she/surface.h"
-#include "she/system.h"
+#include "os/font.h"
+#include "os/surface.h"
+#include "os/system.h"
 #include "ui/scroll_helper.h"
 #include "ui/ui.h"
 
@@ -227,7 +229,7 @@ bool Timeline::Row::parentEditable() const
   return ((int(m_inheritedFlags) & int(LayerFlags::Editable)) != 0);
 }
 
-Timeline::Timeline()
+Timeline::Timeline(TooltipManager* tooltipManager)
   : Widget(kGenericWidget)
   , m_hbar(HORIZONTAL, this)
   , m_vbar(VERTICAL, this)
@@ -240,7 +242,8 @@ Timeline::Timeline()
   , m_state(STATE_STANDBY)
   , m_tagBands(0)
   , m_tagFocusBand(-1)
-  , m_separator_x(100 * guiscale())
+  , m_separator_x(
+      Preferences::instance().general.timelineLayerPanelWidth() * guiscale())
   , m_separator_w(1)
   , m_confPopup(NULL)
   , m_clipboard_timer(100, this)
@@ -248,6 +251,7 @@ Timeline::Timeline()
   , m_redrawMarchingAntsOnly(false)
   , m_scroll(false)
   , m_fromTimeline(false)
+  , m_aniControls(tooltipManager)
 {
   enableFlags(CTRL_RIGHT_CLICK);
 
@@ -268,6 +272,9 @@ Timeline::Timeline()
 
 Timeline::~Timeline()
 {
+  Preferences::instance().general.timelineLayerPanelWidth(
+    m_separator_x / guiscale());
+
   m_clipboard_timer.stop();
 
   detachDocument();
@@ -337,12 +344,12 @@ void Timeline::updateUsingEditor(Editor* editor)
   m_tagFocusBand = m_editor->tagFocusBand();
 
   Site site;
-  DocumentView* view = m_editor->getDocumentView();
+  DocView* view = m_editor->getDocView();
   view->getSite(&site);
 
   site.document()->add_observer(this);
 
-  app::Document* app_document = static_cast<app::Document*>(site.document());
+  Doc* app_document = site.document();
   DocumentPreferences& docPref = Preferences::instance().document(app_document);
 
   m_thumbnailsPrefConn = docPref.thumbnails.AfterChange.connect(
@@ -360,7 +367,7 @@ void Timeline::updateUsingEditor(Editor* editor)
       m_frame == site.frame())
     return;
 
-  m_document = static_cast<app::Document*>(site.document());
+  m_document = site.document();
   m_sprite = site.sprite();
   m_layer = site.layer();
   m_frame = site.frame();
@@ -592,8 +599,8 @@ bool Timeline::onProcessMessage(Message* msg)
 
     case kTimerMessage:
       if (static_cast<TimerMessage*>(msg)->timer() == &m_clipboard_timer) {
-        Document* clipboard_document;
-        DocumentRange clipboard_range;
+        Doc* clipboard_document;
+        DocRange clipboard_range;
         clipboard::get_document_range_info(
           &clipboard_document,
           &clipboard_range);
@@ -625,7 +632,7 @@ bool Timeline::onProcessMessage(Message* msg)
         break;
 
       if (mouseMsg->middle() ||
-          she::instance()->isKeyPressed(kKeySpace)) {
+          os::instance()->isKeyPressed(kKeySpace)) {
         captureMouse();
         m_state = STATE_SCROLLING;
         m_oldPos = static_cast<MouseMessage*>(msg)->position();
@@ -868,6 +875,13 @@ bool Timeline::onProcessMessage(Message* msg)
 
               setLayerCollapsedFlag(m_clk.layer, m_state == STATE_COLLAPSING_LAYERS);
               updateByMousePos(msg, ui::get_mouse_position() - bounds().origin());
+
+              // The m_clk might have changed because we've
+              // expanded/collapsed a group just right now (i.e. we've
+              // called regenerateRows())
+              m_clk = m_hot;
+
+              ASSERT(m_rows[m_clk.layer].layer() == layer);
             }
           }
           break;
@@ -1049,6 +1063,49 @@ bool Timeline::onProcessMessage(Message* msg)
 
       if (hasCapture()) {
         switch (m_state) {
+
+            case STATE_MOVING_RANGE: {
+                frame_t newFrame;
+                if (m_range.type() == Range::kLayers) {
+                  // If we are moving only layers we don't change the
+                  // current frame.
+                  newFrame = m_frame;
+                }
+                else {
+                  frame_t firstDrawableFrame;
+                  frame_t lastDrawableFrame;
+                  getDrawableFrames(&firstDrawableFrame, &lastDrawableFrame);
+
+                  if (hit.frame < firstDrawableFrame)
+                    newFrame = firstDrawableFrame - 1;
+                  else if (hit.frame > lastDrawableFrame)
+                    newFrame = lastDrawableFrame + 1;
+                  else
+                    newFrame = hit.frame;
+                }
+
+                layer_t newLayer;
+                if (m_range.type() == Range::kFrames) {
+                  // If we are moving only frames we don't change the
+                  // current layer.
+                  newLayer = getLayerIndex(m_layer);
+                }
+                else {
+                  layer_t firstDrawableLayer;
+                  layer_t lastDrawableLayer;
+                  getDrawableLayers(&firstDrawableLayer, &lastDrawableLayer);
+
+                  if (hit.layer < firstDrawableLayer)
+                    newLayer = firstDrawableLayer - 1;
+                  else if (hit.layer > lastDrawableLayer)
+                    newLayer = lastDrawableLayer + 1;
+                  else
+                    newLayer = hit.layer;
+                }
+
+                showCel(newLayer, newFrame);
+                break;
+            }
 
           case STATE_SELECTING_LAYERS: {
             Layer* hitLayer = m_rows[hit.layer].layer();
@@ -1357,9 +1414,6 @@ bool Timeline::onProcessMessage(Message* msg)
 
         case kKeySpace: {
           m_scroll = false;
-
-          // We have to clear all the kKeySpace keys in buffer.
-          she::instance()->clearKeyboardBuffer();
           used = true;
           break;
         }
@@ -1480,7 +1534,7 @@ void Timeline::onPaint(ui::PaintEvent& ev)
   try {
     // Lock the sprite to read/render it. We wait 1/4 secs in case
     // the background thread is making a backup.
-    const DocumentReader documentReader(m_document, 250);
+    const DocReader docReader(m_document, 250);
 
     if (m_redrawMarchingAntsOnly) {
       drawClipboardRange(g);
@@ -1491,8 +1545,8 @@ void Timeline::onPaint(ui::PaintEvent& ev)
     layer_t layer, firstLayer, lastLayer;
     frame_t frame, firstFrame, lastFrame;
 
-    getDrawableLayers(g, &firstLayer, &lastLayer);
-    getDrawableFrames(g, &firstFrame, &lastFrame);
+    getDrawableLayers(&firstLayer, &lastLayer);
+    getDrawableFrames(&firstFrame, &lastFrame);
 
     drawTop(g);
 
@@ -1544,7 +1598,10 @@ void Timeline::onPaint(ui::PaintEvent& ev)
       data.begin = layerImagePtr->getCelBegin();
       data.end = layerImagePtr->getCelEnd();
       data.it = layerImagePtr->findFirstCelIteratorAfter(firstFrame-1);
-      data.prevIt = data.end;
+      if (firstFrame > 0 && data.it != data.begin)
+        data.prevIt = data.it-1;
+      else
+        data.prevIt = data.end;
       data.nextIt = (data.it != data.end ? data.it+1: data.end);
 
       // Calculate link range for the active cel
@@ -1615,7 +1672,7 @@ void Timeline::onPaint(ui::PaintEvent& ev)
     }
 #endif
   }
-  catch (const LockedDocumentException&) {
+  catch (const LockedDocException&) {
     noDoc = true;
     defer_invalid_rect(g->getClipBounds().offset(bounds().origin()));
   }
@@ -1638,26 +1695,26 @@ void Timeline::onAfterCommandExecution(CommandExecutionEvent& ev)
   invalidate();
 }
 
-void Timeline::onActiveSiteChange(const doc::Site& site)
+void Timeline::onActiveSiteChange(const Site& site)
 {
   if (hasMouse()) {
     updateStatusBarForFrame(site.frame(), nullptr, site.cel());
   }
 }
 
-void Timeline::onRemoveDocument(doc::Document* document)
+void Timeline::onRemoveDocument(Doc* document)
 {
   if (document == m_document) {
     detachDocument();
   }
 }
 
-void Timeline::onGeneralUpdate(DocumentEvent& ev)
+void Timeline::onGeneralUpdate(DocEvent& ev)
 {
   invalidate();
 }
 
-void Timeline::onAddLayer(doc::DocumentEvent& ev)
+void Timeline::onAddLayer(DocEvent& ev)
 {
   ASSERT(ev.layer() != NULL);
 
@@ -1669,7 +1726,8 @@ void Timeline::onAddLayer(doc::DocumentEvent& ev)
   invalidate();
 }
 
-void Timeline::onAfterRemoveLayer(doc::DocumentEvent& ev)
+// TODO similar to ActiveSiteHandler::onBeforeRemoveLayer()
+void Timeline::onBeforeRemoveLayer(DocEvent& ev)
 {
   Sprite* sprite = ev.sprite();
   Layer* layer = ev.layer();
@@ -1690,14 +1748,19 @@ void Timeline::onAfterRemoveLayer(doc::DocumentEvent& ev)
 
     setLayer(layer_select);
   }
+}
 
+// We have to regenerate the layer rows (m_rows) after the layer is
+// removed from the sprite.
+void Timeline::onAfterRemoveLayer(DocEvent& ev)
+{
   regenerateRows();
   showCurrentCel();
   clearClipboardRange();
   invalidate();
 }
 
-void Timeline::onAddFrame(doc::DocumentEvent& ev)
+void Timeline::onAddFrame(DocEvent& ev)
 {
   setFrame(ev.frame(), false);
 
@@ -1706,7 +1769,8 @@ void Timeline::onAddFrame(doc::DocumentEvent& ev)
   invalidate();
 }
 
-void Timeline::onRemoveFrame(doc::DocumentEvent& ev)
+// TODO similar to ActiveSiteHandler::onRemoveFrame()
+void Timeline::onRemoveFrame(DocEvent& ev)
 {
   // Adjust current frame of all editors that are in a frame more
   // advanced that the removed one.
@@ -1729,18 +1793,18 @@ void Timeline::onRemoveFrame(doc::DocumentEvent& ev)
   invalidate();
 }
 
-void Timeline::onSelectionChanged(doc::DocumentEvent& ev)
+void Timeline::onSelectionBoundariesChanged(DocEvent& ev)
 {
   if (m_rangeLocks == 0)
     clearAndInvalidateRange();
 }
 
-void Timeline::onLayerNameChange(doc::DocumentEvent& ev)
+void Timeline::onLayerNameChange(DocEvent& ev)
 {
   invalidate();
 }
 
-void Timeline::onAddFrameTag(DocumentEvent& ev)
+void Timeline::onAddFrameTag(DocEvent& ev)
 {
   if (m_tagFocusBand >= 0) {
     m_tagFocusBand = -1;
@@ -1749,7 +1813,7 @@ void Timeline::onAddFrameTag(DocumentEvent& ev)
   }
 }
 
-void Timeline::onRemoveFrameTag(DocumentEvent& ev)
+void Timeline::onRemoveFrameTag(DocEvent& ev)
 {
   onAddFrameTag(ev);
 }
@@ -1829,13 +1893,13 @@ void Timeline::setCursor(ui::Message* msg, const Hit& hit)
   }
 }
 
-void Timeline::getDrawableLayers(ui::Graphics* g, layer_t* firstLayer, layer_t* lastLayer)
+void Timeline::getDrawableLayers(layer_t* firstLayer, layer_t* lastLayer)
 {
-  int hpx = (clientBounds().h - headerBoxHeight() - topHeight());
-  layer_t i = this->lastLayer() - ((viewScroll().y+hpx) / layerBoxHeight());
+  layer_t i = this->lastLayer()
+            - ((viewScroll().y + getCelsBounds().h) / layerBoxHeight());
   i = MID(this->firstLayer(), i, this->lastLayer());
 
-  layer_t j = i + (hpx / layerBoxHeight() + 1);
+  layer_t j = this->lastLayer() - viewScroll().y / layerBoxHeight();;
   if (!m_rows.empty())
     j = MID(this->firstLayer(), j, this->lastLayer());
   else
@@ -1845,14 +1909,11 @@ void Timeline::getDrawableLayers(ui::Graphics* g, layer_t* firstLayer, layer_t* 
   *lastLayer = j;
 }
 
-void Timeline::getDrawableFrames(ui::Graphics* g, frame_t* firstFrame, frame_t* lastFrame)
+void Timeline::getDrawableFrames(frame_t* firstFrame, frame_t* lastFrame)
 {
-  int availW = (clientBounds().w - m_separator_x);
-
   *firstFrame = frame_t(viewScroll().x / frameBoxWidth());
-  *lastFrame = *firstFrame
-    + frame_t(availW / frameBoxWidth())
-    + ((availW % frameBoxWidth()) > 0 ? 1: 0);
+  *lastFrame = frame_t((viewScroll().x
+      + getCelsBounds().w) / frameBoxWidth());
 }
 
 void Timeline::drawPart(ui::Graphics* g, const gfx::Rect& bounds,
@@ -1879,8 +1940,8 @@ void Timeline::drawPart(ui::Graphics* g, const gfx::Rect& bounds,
 
 void Timeline::drawClipboardRange(ui::Graphics* g)
 {
-  Document* clipboard_document;
-  DocumentRange clipboard_range;
+  Doc* clipboard_document;
+  DocRange clipboard_range;
   clipboard::get_document_range_info(
     &clipboard_document,
     &clipboard_range);
@@ -2183,10 +2244,14 @@ void Timeline::drawCel(ui::Graphics* g, layer_t layerIndex, frame_t frame, Cel* 
         skinTheme()->calcBorder(this, style));
 
     if (!thumb_bounds.isEmpty()) {
-      she::Surface* thumb_surf = thumb::get_cel_thumbnail(cel, thumb_bounds.size());
-      if (thumb_surf) {
-        g->drawRgbaSurface(thumb_surf, thumb_bounds.x, thumb_bounds.y);
-        thumb_surf->dispose();
+      if (os::Surface* surface = thumb::get_cel_thumbnail(cel, thumb_bounds.size())) {
+        const int t = base::clamp(thumb_bounds.w/8, 4, 16);
+        draw_checked_grid(g, thumb_bounds, gfx::Size(t, t), docPref());
+
+        g->drawRgbaSurface(surface,
+                           thumb_bounds.center().x-surface->width()/2,
+                           thumb_bounds.center().y-surface->height()/2);
+        surface->dispose();
       }
     }
   }
@@ -2198,7 +2263,7 @@ void Timeline::drawCel(ui::Graphics* g, layer_t layerIndex, frame_t frame, Cel* 
 
 void Timeline::updateCelOverlayBounds(const Hit& hit)
 {
-  gfx::Rect inner, outer;
+  gfx::Rect rc;
 
   if (docPref().thumbnails.overlayEnabled() && hit.part == PART_CEL) {
     m_thumbnailsOverlayHit = hit;
@@ -2218,88 +2283,66 @@ void Timeline::updateCelOverlayBounds(const Hit& hit)
     gfx::Point center = client_bounds.center();
 
     gfx::Rect bounds_cel = getPartBounds(m_thumbnailsOverlayHit);
-    inner = gfx::Rect(
+    rc = gfx::Rect(
       bounds_cel.x + m_thumbnailsOverlayDirection.x,
       bounds_cel.y + m_thumbnailsOverlayDirection.y,
       width,
-      height
-    );
+      height);
 
-    if (!client_bounds.contains(inner)) {
+    if (!client_bounds.contains(rc)) {
       m_thumbnailsOverlayDirection = gfx::Point(
         bounds_cel.x < center.x ? (int)(frameBoxWidth()*1.0) : -width,
-        bounds_cel.y < center.y ? (int)(frameBoxWidth()*0.5) : -height+(int)(frameBoxWidth()*0.5)
-      );
-      inner.setOrigin(gfx::Point(
+        bounds_cel.y < center.y ? (int)(frameBoxWidth()*0.5) : -height+(int)(frameBoxWidth()*0.5));
+      rc.setOrigin(gfx::Point(
         bounds_cel.x + m_thumbnailsOverlayDirection.x,
-        bounds_cel.y + m_thumbnailsOverlayDirection.y
-      ));
+        bounds_cel.y + m_thumbnailsOverlayDirection.y));
     }
-
-    outer = gfx::Rect(inner).enlarge(1);
   }
   else {
-    outer = gfx::Rect(0, 0, 0, 0);
+    rc = gfx::Rect(0, 0, 0, 0);
   }
 
-  if (outer != m_thumbnailsOverlayOuter) {
-    if (!m_thumbnailsOverlayOuter.isEmpty()) {
-      invalidateRect(gfx::Rect(m_thumbnailsOverlayOuter).offset(origin()));
-    }
-    if (!outer.isEmpty()) {
-      invalidateRect(gfx::Rect(outer).offset(origin()));
-    }
-    m_thumbnailsOverlayVisible = !outer.isEmpty();
-    m_thumbnailsOverlayOuter = outer;
-    m_thumbnailsOverlayInner = inner;
-  }
+  if (rc == m_thumbnailsOverlayBounds)
+    return;
+
+  if (!m_thumbnailsOverlayBounds.isEmpty())
+    invalidateRect(gfx::Rect(m_thumbnailsOverlayBounds).offset(origin()));
+  if (!rc.isEmpty())
+    invalidateRect(gfx::Rect(rc).offset(origin()));
+
+  m_thumbnailsOverlayVisible = !rc.isEmpty();
+  m_thumbnailsOverlayBounds = rc;
 }
 
 void Timeline::drawCelOverlay(ui::Graphics* g)
 {
-  if (!m_thumbnailsOverlayVisible) {
+  if (!m_thumbnailsOverlayVisible)
     return;
-  }
 
   Layer* layer = m_rows[m_thumbnailsOverlayHit.layer].layer();
   Cel* cel = layer->cel(m_thumbnailsOverlayHit.frame);
-  if (!cel) {
+  if (!cel)
     return;
-  }
-  Image* image = cel->image();
-  if (!image) {
-    return;
-  }
 
-  IntersectClip clip(g, m_thumbnailsOverlayOuter);
+  Image* image = cel->image();
+  if (!image)
+    return;
+
+  IntersectClip clip(g, m_thumbnailsOverlayBounds);
   if (!clip)
     return;
 
-  double scale = (
-    m_sprite->width() > m_sprite->height() ?
-    m_thumbnailsOverlayInner.w / (double)m_sprite->width() :
-    m_thumbnailsOverlayInner.h / (double)m_sprite->height()
-  );
+  gfx::Rect rc = m_sprite->bounds().fitIn(
+    gfx::Rect(m_thumbnailsOverlayBounds).shrink(1));
+  if (os::Surface* surface = thumb::get_cel_thumbnail(cel, rc.size())) {
+    draw_checked_grid(g, rc, gfx::Size(8, 8)*ui::guiscale(), docPref());
 
-  gfx::Size overlay_size(
-    m_thumbnailsOverlayInner.w,
-    m_thumbnailsOverlayInner.h
-  );
-
-  gfx::Rect cel_image_on_overlay(
-    (int)(cel->x() * scale),
-    (int)(cel->y() * scale),
-    (int)(image->width() * scale),
-    (int)(image->height() * scale)
-  );
-
-  she::Surface* overlay_surf = thumb::get_cel_thumbnail(cel, overlay_size, cel_image_on_overlay);
-
-  g->drawRgbaSurface(overlay_surf,
-    m_thumbnailsOverlayInner.x, m_thumbnailsOverlayInner.y);
-  g->drawRect(gfx::rgba(0,0,0,255), m_thumbnailsOverlayOuter);
-
-  overlay_surf->dispose();
+    g->drawRgbaSurface(surface,
+                       rc.center().x-surface->width()/2,
+                       rc.center().y-surface->height()/2);
+    g->drawRect(gfx::rgba(0, 0, 0, 128), m_thumbnailsOverlayBounds);
+    surface->dispose();
+  }
 }
 
 void Timeline::drawCelLinkDecorators(ui::Graphics* g, const gfx::Rect& bounds,
@@ -2386,7 +2429,7 @@ void Timeline::drawFrameTags(ui::Graphics* g)
       int dx = 0, dw = 0;
       if (m_dropTarget.outside &&
           m_dropTarget.hhit != DropTarget::HNone &&
-          m_dropRange.type() == DocumentRange::kFrames) {
+          m_dropRange.type() == DocRange::kFrames) {
         switch (m_dropTarget.hhit) {
           case DropTarget::Before:
             if (m_dropRange.firstFrame() == frameTag->fromFrame()) {
@@ -3354,7 +3397,7 @@ void Timeline::updateStatusBar(ui::Message* msg)
     }
   }
 
-  sb->clearText();
+  sb->showDefaultText();
 }
 
 void Timeline::updateStatusBarForFrame(const frame_t frame,
@@ -3613,7 +3656,7 @@ void Timeline::dropRange(DropOp op)
 {
   bool copy = (op == Timeline::kCopy);
   Range newFromRange;
-  DocumentRangePlace place = kDocumentRangeAfter;
+  DocRangePlace place = kDocRangeAfter;
   Range dropRange = m_dropRange;
   bool outside = m_dropTarget.outside;
 
@@ -3621,19 +3664,19 @@ void Timeline::dropRange(DropOp op)
 
     case Range::kFrames:
       if (m_dropTarget.hhit == DropTarget::Before)
-        place = kDocumentRangeBefore;
+        place = kDocRangeBefore;
       break;
 
     case Range::kLayers:
       switch (m_dropTarget.vhit) {
         case DropTarget::Bottom:
-          place = kDocumentRangeBefore;
+          place = kDocRangeBefore;
           break;
         case DropTarget::FirstChild:
-          place = kDocumentRangeFirstChild;
+          place = kDocRangeFirstChild;
           break;
         case DropTarget::VeryBottom:
-          place = kDocumentRangeBefore;
+          place = kDocRangeBefore;
           {
             Layer* layer = m_sprite->root()->firstLayer();
             dropRange.clearRange();
@@ -3673,6 +3716,12 @@ void Timeline::dropRange(DropOp op)
         !m_sprite->frameTags().empty()) {
       invalidateRect(getFrameHeadersBounds().offset(origin()));
     }
+
+    // Update the sprite position after the command was executed
+    // TODO improve this workaround
+    Cmd* cmd = m_document->undoHistory()->lastExecutedCmd();
+    if (auto cmdTx = dynamic_cast<CmdTransaction*>(cmd))
+      cmdTx->updateSpritePositionAfter();
   }
   catch (const std::exception& ex) {
     Console::showException(ex);
@@ -3699,8 +3748,7 @@ void Timeline::setViewScroll(const gfx::Point& pt)
 
   if (newScroll.y != oldScroll.y) {
     gfx::Rect rc;
-    rc |= getPartBounds(Hit(PART_ROW, 0));
-    rc |= getPartBounds(Hit(PART_ROW, lastLayer()));
+    rc = getLayerHeadersBounds();
     rc.offset(origin());
     invalidateRect(rc);
   }
@@ -3791,8 +3839,8 @@ void Timeline::updateDropRange(const gfx::Point& pt)
 
 void Timeline::clearClipboardRange()
 {
-  Document* clipboard_document;
-  DocumentRange clipboard_range;
+  Doc* clipboard_document;
+  DocRange clipboard_range;
   clipboard::get_document_range_info(
     &clipboard_document,
     &clipboard_range);
@@ -3940,7 +3988,7 @@ bool Timeline::onCanCopy(Context* ctx)
 bool Timeline::onCanPaste(Context* ctx)
 {
   return
-    (clipboard::get_current_format() == clipboard::ClipboardDocumentRange &&
+    (clipboard::get_current_format() == clipboard::ClipboardDocRange &&
      ctx->checkFlags(ContextFlags::ActiveDocumentIsWritable));
 }
 
@@ -3968,7 +4016,7 @@ bool Timeline::onCopy(Context* ctx)
 
 bool Timeline::onPaste(Context* ctx)
 {
-  if (clipboard::get_current_format() == clipboard::ClipboardDocumentRange) {
+  if (clipboard::get_current_format() == clipboard::ClipboardDocRange) {
     clipboard::paste();
     return true;
   }
@@ -3984,13 +4032,13 @@ bool Timeline::onClear(Context* ctx)
   Command* cmd = nullptr;
 
   switch (m_range.type()) {
-    case DocumentRange::kCels:
+    case DocRange::kCels:
       cmd = Commands::instance()->byId(CommandId::ClearCel());
       break;
-    case DocumentRange::kFrames:
+    case DocRange::kFrames:
       cmd = Commands::instance()->byId(CommandId::RemoveFrame());
       break;
-    case DocumentRange::kLayers:
+    case DocRange::kLayers:
       cmd = Commands::instance()->byId(CommandId::RemoveLayer());
       break;
   }

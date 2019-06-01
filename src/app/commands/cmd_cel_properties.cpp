@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -14,10 +14,10 @@
 #include "app/commands/command.h"
 #include "app/console.h"
 #include "app/context_access.h"
-#include "app/document_api.h"
-#include "app/document_range.h"
+#include "app/doc_event.h"
+#include "app/doc_range.h"
 #include "app/modules/gui.h"
-#include "app/transaction.h"
+#include "app/tx.h"
 #include "app/ui/timeline/timeline.h"
 #include "app/ui/user_data_popup.h"
 #include "app/ui_context.h"
@@ -26,7 +26,6 @@
 #include "base/scoped_value.h"
 #include "doc/cel.h"
 #include "doc/cels_range.h"
-#include "doc/document_event.h"
 #include "doc/image.h"
 #include "doc/layer.h"
 #include "doc/sprite.h"
@@ -41,9 +40,9 @@ using namespace ui;
 class CelPropertiesWindow;
 static CelPropertiesWindow* g_window = nullptr;
 
-class CelPropertiesWindow : public app::gen::CelProperties
-                          , public doc::ContextObserver
-                          , public doc::DocumentObserver {
+class CelPropertiesWindow : public app::gen::CelProperties,
+                            public ContextObserver,
+                            public DocObserver {
 public:
   CelPropertiesWindow()
     : m_timer(250, this)
@@ -66,7 +65,7 @@ public:
     UIContext::instance()->remove_observer(this);
   }
 
-  void setCel(Document* doc, Cel* cel) {
+  void setCel(Doc* doc, Cel* cel) {
     if (m_document) {
       m_document->remove_observer(this);
       m_document = nullptr;
@@ -168,13 +167,13 @@ private:
                                  m_userData != m_cel->data()->userData()))) {
       try {
         ContextWriter writer(UIContext::instance());
-        Transaction transaction(writer.context(), "Set Cel Properties");
+        Tx tx(writer.context(), "Set Cel Properties");
 
-        DocumentRange range;
+        DocRange range;
         if (m_range.enabled())
           range = m_range;
         else {
-          range.startRange(m_cel->layer(), m_cel->frame(), DocumentRange::kCels);
+          range.startRange(m_cel->layer(), m_cel->frame(), DocRange::kCels);
           range.endRange(m_cel->layer(), m_cel->frame());
         }
 
@@ -182,12 +181,12 @@ private:
         for (Cel* cel : sprite->uniqueCels(range.selectedFrames())) {
           if (range.contains(cel->layer())) {
             if (!cel->layer()->isBackground() && newOpacity != cel->opacity()) {
-              transaction.execute(new cmd::SetCelOpacity(cel, newOpacity));
+              tx(new cmd::SetCelOpacity(cel, newOpacity));
             }
 
             if (m_newUserData &&
                 m_userData != cel->data()->userData()) {
-              transaction.execute(new cmd::SetUserData(cel->data(), m_userData));
+              tx(new cmd::SetUserData(cel->data(), m_userData));
 
               // Redraw timeline because the cel's user data/color
               // might have changed.
@@ -196,7 +195,7 @@ private:
           }
         }
 
-        transaction.commit();
+        tx.commit();
       }
       catch (const std::exception& e) {
         Console::showException(e);
@@ -224,14 +223,14 @@ private:
   // ContextObserver impl
   void onActiveSiteChange(const Site& site) override {
     if (isVisible())
-      setCel(static_cast<app::Document*>(const_cast<doc::Document*>(site.document())),
+      setCel(const_cast<Doc*>(site.document()),
              const_cast<Cel*>(site.cel()));
     else if (m_document)
       setCel(nullptr, nullptr);
   }
 
-  // DocumentObserver impl
-  void onCelOpacityChange(DocumentEvent& ev) override {
+  // DocObserver impl
+  void onCelOpacityChange(DocEvent& ev) override {
     if (m_cel == ev.cel())
       updateFromCel();
   }
@@ -263,9 +262,9 @@ private:
   }
 
   Timer m_timer;
-  Document* m_document;
+  Doc* m_document;
   Cel* m_cel;
-  DocumentRange m_range;
+  DocRange m_range;
   bool m_selfUpdate;
   UserData m_userData;
   bool m_newUserData;
@@ -274,7 +273,6 @@ private:
 class CelPropertiesCommand : public Command {
 public:
   CelPropertiesCommand();
-  Command* clone() const override { return new CelPropertiesCommand(*this); }
 
 protected:
   bool onEnabled(Context* context) override;

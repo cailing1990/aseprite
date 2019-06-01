@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2016  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -10,8 +10,8 @@
 
 #include "app/cmd/set_total_frames.h"
 
-#include "app/document.h"
-#include "doc/document_event.h"
+#include "app/doc.h"
+#include "app/doc_event.h"
 #include "doc/sprite.h"
 
 namespace app {
@@ -41,11 +41,11 @@ void SetTotalFrames::onUndo()
 void SetTotalFrames::onFireNotifications()
 {
   Sprite* sprite = this->sprite();
-  doc::Document* doc = sprite->document();
-  DocumentEvent ev(doc);
+  Doc* doc = static_cast<Doc*>(sprite->document());
+  DocEvent ev(doc);
   ev.sprite(sprite);
   ev.frame(sprite->totalFrames());
-  doc->notify_observers<DocumentEvent&>(&DocumentObserver::onTotalFramesChanged, ev);
+  doc->notify_observers<DocEvent&>(&DocObserver::onTotalFramesChanged, ev);
 }
 
 } // namespace cmd

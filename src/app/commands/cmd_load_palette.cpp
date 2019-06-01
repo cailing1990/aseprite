@@ -17,7 +17,6 @@
 #include "app/i18n/strings.h"
 #include "app/modules/palettes.h"
 #include "base/fs.h"
-#include "base/unique_ptr.h"
 #include "doc/palette.h"
 #include "fmt/format.h"
 #include "ui/alert.h"
@@ -29,7 +28,6 @@ using namespace ui;
 class LoadPaletteCommand : public Command {
 public:
   LoadPaletteCommand();
-  Command* clone() const override { return new LoadPaletteCommand(*this); }
 
 protected:
   void onLoadParams(const Params& params) override;
@@ -79,7 +77,7 @@ void LoadPaletteCommand::onExecute(Context* context)
   if (filename.empty())
     return;
 
-  base::UniquePtr<doc::Palette> palette(load_palette(filename.c_str()));
+  std::unique_ptr<doc::Palette> palette(load_palette(filename.c_str()));
   if (!palette) {
     if (context->isUIAvailable())
       ui::Alert::show(fmt::format(Strings::alerts_error_loading_file(), filename));
@@ -88,7 +86,7 @@ void LoadPaletteCommand::onExecute(Context* context)
 
   SetPaletteCommand* cmd = static_cast<SetPaletteCommand*>(
     Commands::instance()->byId(CommandId::SetPalette()));
-  cmd->setPalette(palette);
+  cmd->setPalette(palette.get());
   context->executeCommand(cmd);
 }
 

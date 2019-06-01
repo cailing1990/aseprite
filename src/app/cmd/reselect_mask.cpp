@@ -1,5 +1,6 @@
 // Aseprite
-// Copyright (C) 2001-2015  David Capello
+// Copyright (C) 2019  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -11,36 +12,38 @@
 #include "app/cmd/reselect_mask.h"
 
 #include "app/cmd/set_mask.h"
-#include "app/document.h"
+#include "app/doc.h"
 #include "doc/mask.h"
 
 namespace app {
 namespace cmd {
 
-ReselectMask::ReselectMask(Document* doc)
+ReselectMask::ReselectMask(Doc* doc)
   : WithDocument(doc)
 {
 }
 
 void ReselectMask::onExecute()
 {
-  app::Document* doc = document();
+  Doc* doc = document();
 
   if (m_oldMask) {
-    doc->setMask(m_oldMask);
+    doc->setMask(m_oldMask.get());
     m_oldMask.reset();
   }
 
   doc->setMaskVisible(true);
+  doc->notifySelectionChanged();
 }
 
 void ReselectMask::onUndo()
 {
-  app::Document* doc = document();
+  Doc* doc = document();
 
   m_oldMask.reset(doc->isMaskVisible() ? new Mask(*doc->mask()): nullptr);
 
   doc->setMaskVisible(false);
+  doc->notifySelectionChanged();
 }
 
 size_t ReselectMask::onMemSize() const

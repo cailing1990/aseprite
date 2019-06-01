@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -16,16 +16,16 @@
 #include "app/commands/command.h"
 #include "app/console.h"
 #include "app/context_access.h"
+#include "app/doc.h"
+#include "app/doc_event.h"
 #include "app/modules/gui.h"
-#include "app/transaction.h"
+#include "app/tx.h"
 #include "app/ui/separator_in_view.h"
 #include "app/ui/timeline/timeline.h"
 #include "app/ui/user_data_popup.h"
 #include "app/ui_context.h"
 #include "base/bind.h"
 #include "base/scoped_value.h"
-#include "doc/document.h"
-#include "doc/document_event.h"
 #include "doc/image.h"
 #include "doc/layer.h"
 #include "doc/sprite.h"
@@ -41,7 +41,6 @@ using namespace ui;
 class LayerPropertiesCommand : public Command {
 public:
   LayerPropertiesCommand();
-  Command* clone() const override { return new LayerPropertiesCommand(*this); }
 
 protected:
   bool onEnabled(Context* context) override;
@@ -51,9 +50,9 @@ protected:
 class LayerPropertiesWindow;
 static LayerPropertiesWindow* g_window = nullptr;
 
-class LayerPropertiesWindow : public app::gen::LayerProperties
-                            , public doc::ContextObserver
-                            , public doc::DocumentObserver {
+class LayerPropertiesWindow : public app::gen::LayerProperties,
+                              public ContextObserver,
+                              public DocObserver {
 public:
   class BlendModeItem : public ListItem {
   public:
@@ -117,7 +116,7 @@ public:
     UIContext::instance()->remove_observer(this);
   }
 
-  void setLayer(Document* doc, Layer* layer) {
+  void setLayer(Doc* doc, Layer* layer) {
     if (m_layer) {
       m_document->remove_observer(this);
       m_layer = nullptr;
@@ -223,13 +222,13 @@ private:
                                      newBlendMode != static_cast<LayerImage*>(m_layer)->blendMode()))))) {
       try {
         ContextWriter writer(UIContext::instance());
-        Transaction transaction(writer.context(), "Set Layer Properties");
+        Tx tx(writer.context(), "Set Layer Properties");
 
-        DocumentRange range;
+        DocRange range;
         if (m_range.enabled())
           range = m_range;
         else {
-          range.startRange(m_layer, -1, DocumentRange::kLayers);
+          range.startRange(m_layer, -1, DocRange::kLayers);
           range.endRange(m_layer, -1);
         }
 
@@ -240,17 +239,17 @@ private:
 
         for (Layer* layer : range.selectedLayers()) {
           if (nameChanged && newName != layer->name())
-            transaction.execute(new cmd::SetLayerName(layer, newName));
+            tx(new cmd::SetLayerName(layer, newName));
 
           if (userDataChanged && m_userData != layer->userData())
-            transaction.execute(new cmd::SetUserData(layer, m_userData));
+            tx(new cmd::SetUserData(layer, m_userData));
 
           if (layer->isImage()) {
             if (opacityChanged && newOpacity != static_cast<LayerImage*>(layer)->opacity())
-              transaction.execute(new cmd::SetLayerOpacity(static_cast<LayerImage*>(layer), newOpacity));
+              tx(new cmd::SetLayerOpacity(static_cast<LayerImage*>(layer), newOpacity));
 
             if (blendModeChanged && newBlendMode != static_cast<LayerImage*>(layer)->blendMode())
-              transaction.execute(new cmd::SetLayerBlendMode(static_cast<LayerImage*>(layer), newBlendMode));
+              tx(new cmd::SetLayerBlendMode(static_cast<LayerImage*>(layer), newBlendMode));
           }
         }
 
@@ -258,7 +257,7 @@ private:
         // might have changed.
         App::instance()->timeline()->invalidate();
 
-        transaction.commit();
+        tx.commit();
       }
       catch (const std::exception& e) {
         Console::showException(e);
@@ -271,24 +270,24 @@ private:
   // ContextObserver impl
   void onActiveSiteChange(const Site& site) override {
     if (isVisible())
-      setLayer(const_cast<Document*>(static_cast<const Document*>(site.document())),
+      setLayer(const_cast<Doc*>(site.document()),
                const_cast<Layer*>(site.layer()));
     else if (m_layer)
       setLayer(nullptr, nullptr);
   }
 
-  // DocumentObserver impl
-  void onLayerNameChange(DocumentEvent& ev) override {
+  // DocObserver impl
+  void onLayerNameChange(DocEvent& ev) override {
     if (m_layer == ev.layer())
       updateFromLayer();
   }
 
-  void onLayerOpacityChange(DocumentEvent& ev) override {
+  void onLayerOpacityChange(DocEvent& ev) override {
     if (m_layer == ev.layer())
       updateFromLayer();
   }
 
-  void onLayerBlendModeChange(DocumentEvent& ev) override {
+  void onLayerBlendModeChange(DocEvent& ev) override {
     if (m_layer == ev.layer())
       updateFromLayer();
   }
@@ -345,9 +344,9 @@ private:
   }
 
   Timer m_timer;
-  Document* m_document;
+  Doc* m_document;
   Layer* m_layer;
-  DocumentRange m_range;
+  DocRange m_range;
   bool m_selfUpdate;
   UserData m_userData;
 };
@@ -366,7 +365,7 @@ bool LayerPropertiesCommand::onEnabled(Context* context)
 void LayerPropertiesCommand::onExecute(Context* context)
 {
   ContextReader reader(context);
-  Document* doc = static_cast<Document*>(reader.document());
+  Doc* doc = static_cast<Doc*>(reader.document());
   LayerImage* layer = static_cast<LayerImage*>(reader.layer());
 
   if (!g_window)

@@ -1,4 +1,5 @@
 // Aseprite UI Library
+// Copyright (C) 2018  Igara Studio S.A.
 // Copyright (C) 2001-2017  David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -15,7 +16,7 @@
 #include "ui/pointer_type.h"
 #include "ui/widget.h"
 
-namespace she {
+namespace os {
   class Display;
   class EventQueue;
 }
@@ -34,9 +35,9 @@ namespace ui {
     Manager();
     ~Manager();
 
-    she::Display* getDisplay() { return m_display; }
+    os::Display* getDisplay() { return m_display; }
 
-    void setDisplay(she::Display* display);
+    void setDisplay(os::Display* display);
 
     // Executes the main message loop.
     void run();
@@ -73,7 +74,6 @@ namespace ui {
     void freeMouse();
     void freeCapture();
     void freeWidget(Widget* widget);
-    void removeMessage(Message* msg);
     void removeMessagesFor(Widget* widget);
     void removeMessagesFor(Widget* widget, MessageType type);
     void removeMessagesForTimer(Timer* timer);
@@ -81,8 +81,6 @@ namespace ui {
     void addMessageFilter(int message, Widget* widget);
     void removeMessageFilter(int message, Widget* widget);
     void removeMessageFilterFor(Widget* widget);
-
-    void invalidateDisplayRegion(const gfx::Region& region);
 
     LayoutIO* getLayoutIO();
 
@@ -109,6 +107,7 @@ namespace ui {
 
   protected:
     bool onProcessMessage(Message* msg) override;
+    void onInvalidateRegion(const gfx::Region& region) override;
     void onResize(ResizeEvent& ev) override;
     void onSizeHint(SizeHintEvent& ev) override;
     void onBroadcastMouseMessage(WidgetsList& targets) override;
@@ -120,7 +119,7 @@ namespace ui {
     void generateSetCursorMessage(const gfx::Point& mousePos,
                                   KeyModifiers modifiers,
                                   PointerType pointerType);
-    void generateMessagesFromSheEvents();
+    void generateMessagesFromOSEvents();
     void handleMouseMove(const gfx::Point& mousePos,
                          MouseButtons mouseButtons,
                          KeyModifiers modifiers,
@@ -151,7 +150,7 @@ namespace ui {
     int pumpQueue();
     bool sendMessageToWidget(Message* msg, Widget* widget);
 
-    static void removeWidgetFromRecipients(Widget* widget, Message* msg);
+    static Widget* findLowestCommonAncestor(Widget* a, Widget* b);
     static bool someParentIsFocusStop(Widget* widget);
     static Widget* findMagneticWidget(Widget* widget);
     static Message* newMouseMessage(
@@ -168,8 +167,8 @@ namespace ui {
     static gfx::Region m_dirtyRegion;
 
     WidgetsList m_garbage;
-    she::Display* m_display;
-    she::EventQueue* m_eventQueue;
+    os::Display* m_display;
+    os::EventQueue* m_eventQueue;
     gfx::Region m_invalidRegion;  // Invalid region (we didn't receive paint messages yet for this).
 
     // This member is used to make freeWidget() a no-op when we

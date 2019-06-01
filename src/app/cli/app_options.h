@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018-2019  Igara Studio S.A.
 // Copyright (C) 2001-2017  David Capello
 //
 // This program is distributed under the terms of
@@ -72,11 +73,13 @@ public:
   const Option& shapePadding() const { return m_shapePadding; }
   const Option& innerPadding() const { return m_innerPadding; }
   const Option& trim() const { return m_trim; }
+  const Option& trimByGrid() const { return m_trimByGrid; }
   const Option& crop() const { return m_crop; }
   const Option& slice() const { return m_slice; }
   const Option& filenameFormat() const { return m_filenameFormat; }
 #ifdef ENABLE_SCRIPTING
   const Option& script() const { return m_script; }
+  const Option& scriptParam() const { return m_scriptParam; }
 #endif
   const Option& listLayers() const { return m_listLayers; }
   const Option& listTags() const { return m_listTags; }
@@ -130,11 +133,13 @@ private:
   Option& m_shapePadding;
   Option& m_innerPadding;
   Option& m_trim;
+  Option& m_trimByGrid;
   Option& m_crop;
   Option& m_slice;
   Option& m_filenameFormat;
 #ifdef ENABLE_SCRIPTING
   Option& m_script;
+  Option& m_scriptParam;
 #endif
   Option& m_listLayers;
   Option& m_listTags;

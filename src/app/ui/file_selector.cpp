@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -14,12 +15,13 @@
 #include "app/console.h"
 #include "app/file/file.h"
 #include "app/i18n/strings.h"
-#include "app/ini_file.h"
 #include "app/modules/gfx.h"
 #include "app/modules/gui.h"
+#include "app/pref/preferences.h"
 #include "app/recent_files.h"
 #include "app/ui/file_list.h"
 #include "app/ui/file_list_view.h"
+#include "app/ui/separator_in_view.h"
 #include "app/ui/skin/skin_theme.h"
 #include "app/widget_loader.h"
 #include "base/bind.h"
@@ -27,7 +29,6 @@
 #include "base/fs.h"
 #include "base/paths.h"
 #include "base/string.h"
-#include "base/unique_ptr.h"
 #include "fmt/format.h"
 #include "ui/ui.h"
 
@@ -37,6 +38,7 @@
 #include <cctype>
 #include <cerrno>
 #include <iterator>
+#include <list>
 #include <set>
 #include <string>
 #include <vector>
@@ -125,7 +127,7 @@ protected:
     if (m_fileList->multipleSelection())
       m_fileList->deselectedFileItems();
 
-    removeAllItems();
+    deleteAllItems();
 
     // String to be autocompleted
     std::string left_part = getEntryWidget()->text();
@@ -274,10 +276,14 @@ FileSelector::FileSelector(FileSelectorType type)
   goForwardButton()->setFocusStop(false);
   goUpButton()->setFocusStop(false);
   newFolderButton()->setFocusStop(false);
+  viewType()->setFocusStop(false);
+  for (auto child : viewType()->children())
+    child->setFocusStop(false);
 
   m_fileList = new FileList();
   m_fileList->setId("fileview");
   m_fileName->setAssociatedFileList(m_fileList);
+  m_fileList->setZoom(Preferences::instance().fileSelector.zoom());
 
   m_fileView = new FileListView();
   m_fileView->attachToView(m_fileList);
@@ -288,6 +294,7 @@ FileSelector::FileSelector(FileSelectorType type)
   goForwardButton()->Click.connect(base::Bind<void>(&FileSelector::onGoForward, this));
   goUpButton()->Click.connect(base::Bind<void>(&FileSelector::onGoUp, this));
   newFolderButton()->Click.connect(base::Bind<void>(&FileSelector::onNewFolder, this));
+  viewType()->ItemChange.connect(base::Bind<void>(&FileSelector::onChangeViewType, this));
   location()->CloseListBox.connect(base::Bind<void>(&FileSelector::onLocationCloseListBox, this));
   fileType()->Change.connect(base::Bind<void>(&FileSelector::onFileTypeChange, this));
   m_fileList->FileSelected.connect(base::Bind<void>(&FileSelector::onFileListFileSelected, this));
@@ -351,7 +358,7 @@ bool FileSelector::show(
   // If initialPath doesn't contain a path.
   if (base::get_file_path(initialPath).empty()) {
     // Get the saved `path' in the configuration file.
-    std::string path = get_config_string("FileSelect", "CurrentDirectory", "<empty>");
+    std::string path = Preferences::instance().fileSelector.currentFolder();
     if (path == "<empty>") {
       start_folder_path = base::get_user_docs_folder();
       path = base::join_path(start_folder_path, initialPath);
@@ -406,7 +413,7 @@ bool FileSelector::show(
   updateNavigationButtons();
 
   // fill file-type combo-box
-  fileType()->removeAllItems();
+  fileType()->deleteAllItems();
 
   // Get the default extension from the given initial file name
   if (m_defExtension.empty())
@@ -474,7 +481,11 @@ again:
         enter_folder = folder;
     }
     else if (fn.empty()) {
-      if (m_type != FileSelectorType::OpenMultiple) {
+      IFileItem* selected = m_fileList->selectedFileItem();
+      if (selected && selected->isBrowsable())
+        enter_folder = selected;
+      else if (m_type != FileSelectorType::OpenMultiple ||
+               m_fileList->selectedFileItems().empty()) {
         // Show the window again
         setVisible(true);
         goto again;
@@ -629,9 +640,9 @@ again:
 
     // save the path in the configuration file
     std::string lastpath = folder->keyName();
-    set_config_string("FileSelect", "CurrentDirectory",
-                      lastpath.c_str());
+    Preferences::instance().fileSelector.currentFolder(lastpath);
   }
+  Preferences::instance().fileSelector.zoom(m_fileList->zoom());
 
   return (!output.empty());
 }
@@ -651,7 +662,7 @@ void FileSelector::updateLocation()
   }
 
   // Clear all the items from the combo-box
-  location()->removeAllItems();
+  location()->deleteAllItems();
 
   // Add item by item (from root to the specific current folder)
   int level = 0;
@@ -676,14 +687,20 @@ void FileSelector::updateLocation()
   }
 
   // Add paths from recent files list
-  {
-    location()->addItem("");
-    location()->addItem("-------- Recent Paths --------");
-
-    auto it = App::instance()->recentFiles()->paths_begin();
-    auto end = App::instance()->recentFiles()->paths_end();
-    for (; it != end; ++it)
-      location()->addItem(new CustomFolderNameItem(it->c_str()));
+  auto recent = App::instance()->recentFiles();
+  if (!recent->pinnedFolders().empty()) {
+    auto sep = new SeparatorInView(Strings::file_selector_pinned_folders(), HORIZONTAL);
+    sep->setMinSize(gfx::Size(0, sep->sizeHint().h*2));
+    location()->addItem(sep);
+    for (const auto& fn : recent->pinnedFolders())
+      location()->addItem(new CustomFolderNameItem(fn.c_str()));
+  }
+  if (!recent->recentFolders().empty()) {
+    auto sep = new SeparatorInView(Strings::file_selector_recent_folders(), HORIZONTAL);
+    sep->setMinSize(gfx::Size(0, sep->sizeHint().h*2));
+    location()->addItem(sep);
+    for (const auto& fn : recent->recentFolders())
+      location()->addItem(new CustomFolderNameItem(fn.c_str()));
   }
 
   // Select the location
@@ -802,6 +819,17 @@ void FileSelector::onNewFolder()
   }
 }
 
+void FileSelector::onChangeViewType()
+{
+  double newZoom = m_fileList->zoom();
+  switch (viewType()->selectedItem()) {
+    case 0: newZoom = 1.0; break;
+    case 1: newZoom = 2.0; break;
+    case 2: newZoom = 8.0; break;
+  }
+  m_fileList->animateToZoom(newZoom);
+}
+
 // Hook for the 'location' combo-box
 void FileSelector::onLocationCloseListBox()
 {
@@ -867,7 +895,7 @@ void FileSelector::onFileListFileSelected()
 {
   IFileItem* fileitem = m_fileList->selectedFileItem();
 
-  if (!fileitem->isFolder()) {
+  if (fileitem && !fileitem->isFolder()) {
     std::string filename = base::get_file_name(fileitem->fileName());
 
     if (m_type != FileSelectorType::OpenMultiple ||

@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018-2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -13,6 +14,7 @@
 #include "app/app.h"
 #include "app/app_menus.h"
 #include "app/commands/commands.h"
+#include "app/crash/data_recovery.h"
 #include "app/i18n/strings.h"
 #include "app/ini_file.h"
 #include "app/modules/editors.h"
@@ -21,7 +23,7 @@
 #include "app/ui/browser_view.h"
 #include "app/ui/color_bar.h"
 #include "app/ui/context_bar.h"
-#include "app/ui/document_view.h"
+#include "app/ui/doc_view.h"
 #include "app/ui/editor/editor.h"
 #include "app/ui/editor/editor_view.h"
 #include "app/ui/home_view.h"
@@ -38,11 +40,12 @@
 #include "app/ui_context.h"
 #include "base/bind.h"
 #include "base/fs.h"
-#include "she/display.h"
-#include "she/system.h"
+#include "os/display.h"
+#include "os/system.h"
 #include "ui/message.h"
 #include "ui/splitter.h"
 #include "ui/system.h"
+#include "ui/tooltips.h"
 #include "ui/view.h"
 
 #ifdef ENABLE_SCRIPTING
@@ -76,7 +79,7 @@ public:
     ui::set_theme(ui::get_theme(), newUIScale);
 
     Manager* manager = Manager::getDefault();
-    she::Display* display = manager->getDisplay();
+    os::Display* display = manager->getDisplay();
     display->setScale(newScreenScale);
     manager->setDisplay(display);
   }
@@ -91,18 +94,31 @@ MainWindow::MainWindow()
   , m_devConsoleView(nullptr)
 #endif
 {
+  m_tooltipManager = new TooltipManager();
   m_menuBar = new MainMenuBar();
+
+  // Register commands to load menus+shortcuts for these commands
+  Editor::registerCommands();
+
+  // Load all menus+keys for the first time
+  AppMenus::instance()->reload();
+
+  // Setup the main menubar
+  m_menuBar->setMenu(AppMenus::instance()->getRootMenu());
+
   m_notifications = new Notifications();
-  m_contextBar = new ContextBar();
-  m_statusBar = new StatusBar();
-  m_colorBar = new ColorBar(colorBarPlaceholder()->align());
+  m_contextBar = new ContextBar(m_tooltipManager);
+  m_statusBar = new StatusBar(m_tooltipManager);
+  m_colorBar = new ColorBar(colorBarPlaceholder()->align(),
+                            m_tooltipManager);
   m_toolBar = new ToolBar();
   m_tabsBar = new WorkspaceTabs(this);
   m_workspace = new Workspace();
   m_previewEditor = new PreviewEditorWindow();
-  m_timeline = new Timeline();
 
-  Editor::registerCommands();
+  // The timeline (AniControls) tooltips will use the keyboard
+  // shortcuts loaded above.
+  m_timeline = new Timeline(m_tooltipManager);
 
   m_workspace->setTabsBar(m_tabsBar);
   m_workspace->ActiveViewChanged.connect(&MainWindow::onActiveViewChange, this);
@@ -119,13 +135,8 @@ MainWindow::MainWindow()
   m_workspace->setExpansive(true);
   m_notifications->setVisible(false);
 
-  // Load all menus by first time.
-  AppMenus::instance()->reload();
-
-  // Setup the menus
-  m_menuBar->setMenu(AppMenus::instance()->getRootMenu());
-
   // Add the widgets in the boxes
+  addChild(m_tooltipManager);
   menuBarPlaceholder()->addChild(m_menuBar);
   menuBarPlaceholder()->addChild(m_notifications);
   contextBarPlaceholder()->addChild(m_contextBar);
@@ -198,9 +209,9 @@ MainWindow::~MainWindow()
   m_menuBar->setMenu(NULL);
 }
 
-DocumentView* MainWindow::getDocView()
+DocView* MainWindow::getDocView()
 {
-  return dynamic_cast<DocumentView*>(m_workspace->activeView());
+  return dynamic_cast<DocView*>(m_workspace->activeView());
 }
 
 HomeView* MainWindow::getHomeView()
@@ -317,9 +328,9 @@ void MainWindow::popTimeline()
     setTimelineVisibility(true);
 }
 
-void MainWindow::showDataRecovery(crash::DataRecovery* dataRecovery)
+void MainWindow::dataRecoverySessionsAreReady()
 {
-  getHomeView()->showDataRecovery(dataRecovery);
+  getHomeView()->dataRecoverySessionsAreReady();
 }
 
 bool MainWindow::onProcessMessage(ui::Message* msg)
@@ -352,7 +363,7 @@ void MainWindow::onResize(ui::ResizeEvent& ev)
 {
   app::gen::MainWindow::onResize(ev);
 
-  she::Display* display = manager()->getDisplay();
+  os::Display* display = manager()->getDisplay();
   if ((display) &&
       (display->scale()*ui::guiscale() > 2) &&
       (!m_scalePanic) &&
@@ -367,7 +378,7 @@ void MainWindow::onResize(ui::ResizeEvent& ev)
 // inform to the UIContext that the current view has changed.
 void MainWindow::onActiveViewChange()
 {
-  if (DocumentView* docView = getDocView())
+  if (DocView* docView = getDocView())
     UIContext::instance()->setActiveView(docView);
   else
     UIContext::instance()->setActiveView(nullptr);
@@ -377,8 +388,8 @@ void MainWindow::onActiveViewChange()
 
 bool MainWindow::isTabModified(Tabs* tabs, TabView* tabView)
 {
-  if (DocumentView* docView = dynamic_cast<DocumentView*>(tabView)) {
-    Document* document = docView->document();
+  if (DocView* docView = dynamic_cast<DocView*>(tabView)) {
+    Doc* document = docView->document();
     return document->isModified();
   }
   else {
@@ -438,12 +449,12 @@ void MainWindow::onTabsContainerDoubleClicked(Tabs* tabs)
 {
   WorkspacePanel* mainPanel = m_workspace->mainPanel();
   WorkspaceView* oldActiveView = mainPanel->activeView();
-  app::Document* oldDoc = static_cast<app::Document*>(UIContext::instance()->activeDocument());
+  Doc* oldDoc = UIContext::instance()->activeDocument();
 
   Command* command = Commands::instance()->byId(CommandId::NewFile());
   UIContext::instance()->executeCommand(command);
 
-  app::Document* newDoc = static_cast<app::Document*>(UIContext::instance()->activeDocument());
+  Doc* newDoc = UIContext::instance()->activeDocument();
   if (newDoc != oldDoc) {
     WorkspacePanel* doubleClickedPanel =
       static_cast<WorkspaceTabs*>(tabs)->panel();
@@ -465,8 +476,8 @@ void MainWindow::onTabsContainerDoubleClicked(Tabs* tabs)
 void MainWindow::onMouseOverTab(Tabs* tabs, TabView* tabView)
 {
   // Note: tabView can be NULL
-  if (DocumentView* docView = dynamic_cast<DocumentView*>(tabView)) {
-    Document* document = docView->document();
+  if (DocView* docView = dynamic_cast<DocView*>(tabView)) {
+    Doc* document = docView->document();
 
     std::string name;
     if (Preferences::instance().general.showFullPath())
@@ -474,11 +485,14 @@ void MainWindow::onMouseOverTab(Tabs* tabs, TabView* tabView)
     else
       name = base::get_file_name(document->filename());
 
-    m_statusBar->setStatusText(250, "%s", name.c_str());
+    m_statusBar->showDefaultText(document);
   }
-  else {
-    m_statusBar->clearText();
-  }
+  else
+    m_statusBar->showDefaultText();
+}
+
+void MainWindow::onMouseLeaveTab() {
+  m_statusBar->showDefaultText();
 }
 
 DropViewPreviewResult MainWindow::onFloatingTab(Tabs* tabs, TabView* tabView, const gfx::Point& pos)
@@ -514,7 +528,7 @@ void MainWindow::configureWorkspaceLayout()
   bool normal = (m_mode == NormalMode);
   bool isDoc = (getDocView() != nullptr);
 
-  if (she::instance()->menus() == nullptr ||
+  if (os::instance()->menus() == nullptr ||
       pref.general.showMenuBar()) {
     if (!m_menuBar->parent())
       menuBarPlaceholder()->insertChild(0, m_menuBar);

@@ -1,5 +1,6 @@
 // Aseprite
-// Copyright (C) 2001-2015, 2018  David Capello
+// Copyright (C) 2019  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -9,13 +10,16 @@
 #pragma once
 
 #include "app/context.h"
-#include "doc/documents_observer.h"
+#include "app/docs_observer.h"
+
+#include <vector>
 
 namespace app {
-  class DocumentView;
+  class DocView;
   class Editor;
 
-  typedef std::vector<DocumentView*> DocumentViews;
+  typedef std::vector<DocView*> DocViews;
+  typedef std::vector<Editor*> Editors;
 
   class UIContext : public app::Context {
   public:
@@ -26,27 +30,37 @@ namespace app {
 
     bool isUIAvailable() const override;
 
-    DocumentView* activeView() const;
-    void setActiveView(DocumentView* documentView);
+    DocView* activeView() const;
+    void setActiveView(DocView* documentView);
 
-    DocumentView* getFirstDocumentView(doc::Document* document) const override;
-    DocumentViews getAllDocumentViews(doc::Document* document) const;
+    DocView* getFirstDocView(Doc* document) const override;
+    DocViews getAllDocViews(Doc* document) const;
+    Editors getAllEditorsIncludingPreview(Doc* document) const;
 
     // Returns the current editor. It can be null.
     Editor* activeEditor();
 
     // Returns the active editor for the given document, or creates a
     // new one if it's necessary.
-    Editor* getEditorFor(Document* document);
+    Editor* getEditorFor(Doc* document);
+
+    // Returns the list of closed docs in this session.
+    const std::vector<Doc*>& closedDocs() const { return m_closedDocs; }
+    void reopenClosedDoc(Doc* doc);
 
   protected:
-    void onAddDocument(doc::Document* doc) override;
-    void onRemoveDocument(doc::Document* doc) override;
-    void onGetActiveSite(doc::Site* site) const override;
-    void onSetActiveDocument(doc::Document* doc) override;
+    void onAddDocument(Doc* doc) override;
+    void onRemoveDocument(Doc* doc) override;
+    void onGetActiveSite(Site* site) const override;
+    void onSetActiveDocument(Doc* doc) override;
+    void onSetActiveLayer(doc::Layer* layer) override;
+    void onSetActiveFrame(const doc::frame_t frame) override;
+    void onCloseDocument(Doc* doc) override;
 
   private:
-    DocumentView* m_lastSelectedView;
+    DocView* m_lastSelectedView;
+    std::vector<Doc*> m_closedDocs;
+
     static UIContext* m_instance;
   };
 

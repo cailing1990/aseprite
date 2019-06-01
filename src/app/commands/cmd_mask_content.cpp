@@ -1,5 +1,6 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2019  Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -17,7 +18,7 @@
 #include "app/modules/editors.h"
 #include "app/modules/gui.h"
 #include "app/tools/tool_box.h"
-#include "app/transaction.h"
+#include "app/tx.h"
 #include "app/ui/editor/editor.h"
 #include "app/ui/toolbar.h"
 #include "doc/algorithm/shrink_bounds.h"
@@ -32,7 +33,6 @@ namespace app {
 class MaskContentCommand : public Command {
 public:
   MaskContentCommand();
-  Command* clone() const override { return new MaskContentCommand(*this); }
 
 protected:
   bool onEnabled(Context* context) override;
@@ -52,7 +52,7 @@ bool MaskContentCommand::onEnabled(Context* context)
 
 void MaskContentCommand::onExecute(Context* context)
 {
-  Document* document;
+  Doc* document;
   {
     ContextWriter writer(context);
     document = writer.document();
@@ -82,12 +82,10 @@ void MaskContentCommand::onExecute(Context* context)
       newMask.replace(cel->bounds());
     }
 
-    Transaction transaction(writer.context(), "Select Content", DoesntModifyDocument);
-    transaction.execute(new cmd::SetMask(document, &newMask));
-    transaction.commit();
-
+    Tx tx(writer.context(), "Select Content", DoesntModifyDocument);
+    tx(new cmd::SetMask(document, &newMask));
     document->resetTransformation();
-    document->generateMaskBoundaries();
+    tx.commit();
   }
 
   // Select marquee tool

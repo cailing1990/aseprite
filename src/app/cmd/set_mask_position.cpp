@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2015  David Capello
 //
 // This program is distributed under the terms of
@@ -10,13 +11,13 @@
 
 #include "app/cmd/set_mask_position.h"
 
-#include "app/document.h"
+#include "app/doc.h"
 #include "doc/mask.h"
 
 namespace app {
 namespace cmd {
 
-SetMaskPosition::SetMaskPosition(Document* doc, const gfx::Point& pos)
+SetMaskPosition::SetMaskPosition(Doc* doc, const gfx::Point& pos)
   : WithDocument(doc)
   , m_oldPosition(doc->mask()->bounds().origin())
   , m_newPosition(pos)
@@ -35,9 +36,11 @@ void SetMaskPosition::onUndo()
 
 void SetMaskPosition::setMaskPosition(const gfx::Point& pos)
 {
-  Document* doc = document();
+  Doc* doc = document();
   doc->mask()->setOrigin(pos.x, pos.y);
   doc->resetTransformation();
+
+  doc->notifySelectionChanged();
 }
 
 } // namespace cmd

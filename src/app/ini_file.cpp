@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018-2019  Igara Studio S.A.
 // Copyright (C) 2001-2016  David Capello
 //
 // This program is distributed under the terms of
@@ -17,8 +18,8 @@
 #include "cfg/cfg.h"
 
 #ifdef __APPLE__
-#include "she/logger.h"
-#include "she/system.h"
+#include "os/logger.h"
+#include "os/system.h"
 #endif
 
 #ifndef _WIN32
@@ -71,7 +72,7 @@ ConfigModule::ConfigModule()
       std::string err = "Error in configuration migration: ";
       err += ex.what();
 
-      auto system = she::instance();
+      auto system = os::instance();
       if (system && system->logger())
         system->logger()->logError(err.c_str());
     }
@@ -212,6 +213,28 @@ void set_config_point(const char* section, const char* name, const Point& point)
   set_config_string(section, name, buf);
 }
 
+Size get_config_size(const char* section, const char* name, const Size& size)
+{
+  Size size2(size);
+  const char* value = get_config_string(section, name, "");
+  if (value) {
+    std::vector<std::string> parts;
+    base::split_string(value, parts, " ");
+    if (parts.size() == 2) {
+      size2.w = strtol(parts[0].c_str(), NULL, 10);
+      size2.h = strtol(parts[1].c_str(), NULL, 10);
+    }
+  }
+  return size2;
+}
+
+void set_config_size(const char* section, const char* name, const Size& size)
+{
+  char buf[128];
+  sprintf(buf, "%d %d", size.w, size.h);
+  set_config_string(section, name, buf);
+}
+
 Rect get_config_rect(const char* section, const char* name, const Rect& rect)
 {
   Rect rect2(rect);
@@ -249,6 +272,18 @@ void set_config_color(const char* section, const char* name, const app::Color& v
 void del_config_value(const char* section, const char* name)
 {
   g_configs.back()->deleteValue(section, name);
+}
+
+void del_config_section(const char* section)
+{
+  g_configs.back()->deleteSection(section);
+}
+
+base::paths enum_config_keys(const char* section)
+{
+  base::paths keys;
+  g_configs.back()->getAllKeys(section, keys);
+  return keys;
 }
 
 } // namespace app

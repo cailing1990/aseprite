@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2017  David Capello
 //
 // This program is distributed under the terms of
@@ -15,14 +16,15 @@
 #include "app/modules/palettes.h"
 #include "app/ui/skin/skin_theme.h"
 #include "base/bind.h"
-#include "doc/conversion_she.h"
+#include "doc/conversion_to_surface.h"
 #include "doc/image.h"
 #include "doc/image_ref.h"
 #include "doc/primitives.h"
+#include "os/surface.h"
+#include "os/system.h"
+#include "render/dithering.h"
 #include "render/gradient.h"
 #include "render/quantization.h"
-#include "she/surface.h"
-#include "she/system.h"
 #include "ui/graphics.h"
 #include "ui/listitem.h"
 #include "ui/paint_event.h"
@@ -42,8 +44,7 @@ public:
              const std::string& text)
     : ListItem(text)
     , m_matrixOnly(false)
-    , m_algo(algo)
-    , m_matrix(matrix)
+    , m_dithering(algo, matrix)
     , m_preview(nullptr)
     , m_palId(0)
     , m_palMods(0)
@@ -54,19 +55,23 @@ public:
              const std::string& text)
     : ListItem(text)
     , m_matrixOnly(true)
-    , m_algo(render::DitheringAlgorithm::None)
-    , m_matrix(matrix)
+    , m_dithering(render::DitheringAlgorithm::None, matrix)
     , m_preview(nullptr)
     , m_palId(0)
     , m_palMods(0)
   {
   }
 
-  render::DitheringAlgorithm algo() const { return m_algo; }
-  render::DitheringMatrix matrix() const { return m_matrix; }
+  render::DitheringAlgorithm algo() const {
+    return m_dithering.algorithm();
+  }
+
+  render::DitheringMatrix matrix() const {
+    return m_dithering.matrix();
+  }
 
 private:
-  she::Surface* preview() {
+  os::Surface* preview() {
     const doc::Palette* palette = get_current_palette();
     ASSERT(palette);
 
@@ -90,7 +95,8 @@ private:
       gfx::Point(w-1, 0),
       doc::rgba(0, 0, 0, 255),
       doc::rgba(255, 255, 255, 255),
-      m_matrixOnly ? m_matrix: render::DitheringMatrix());
+      (m_matrixOnly ? m_dithering.matrix():
+                      render::DitheringMatrix()));
 
     doc::ImageRef image2;
     if (m_matrixOnly) {
@@ -101,10 +107,10 @@ private:
       doc::clear_image(image2.get(), 0);
       render::convert_pixel_format(
         image1.get(), image2.get(), IMAGE_INDEXED,
-        m_algo, m_matrix, nullptr, palette, true, -1, nullptr);
+        m_dithering, nullptr, palette, true, -1, nullptr);
     }
 
-    m_preview = she::instance()->createRgbaSurface(w, h);
+    m_preview = os::instance()->createRgbaSurface(w, h);
     doc::convert_image_to_surface(image2.get(), palette, m_preview,
                                   0, 0, 0, 0, w, h);
 
@@ -150,9 +156,8 @@ private:
   }
 
   bool m_matrixOnly;
-  render::DitheringAlgorithm m_algo;
-  render::DitheringMatrix m_matrix;
-  she::Surface* m_preview;
+  render::Dithering m_dithering;
+  os::Surface* m_preview;
   doc::ObjectId m_palId;
   int m_palMods;
 };
@@ -176,7 +181,7 @@ DitheringSelector::DitheringSelector(Type type)
 
 void DitheringSelector::regenerate()
 {
-  removeAllItems();
+  deleteAllItems();
 
   Extensions& extensions = App::instance()->extensions();
   auto ditheringMatrices = extensions.ditheringMatrices();
@@ -199,6 +204,11 @@ void DitheringSelector::regenerate()
             it.matrix(),
             "Old Dithering+" + it.name()));
       }
+      addItem(
+        new DitherItem(
+          render::DitheringAlgorithm::ErrorDiffusion,
+          render::DitheringMatrix(),
+          "Floyd-Steinberg Error Diffusion Dithering"));
       break;
     case SelectMatrix:
       addItem(new DitherItem(render::DitheringMatrix(), "No Dithering"));

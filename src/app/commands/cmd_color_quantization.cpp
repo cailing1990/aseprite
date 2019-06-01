@@ -1,5 +1,6 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2019 Igara Studio S.A.
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -21,8 +22,6 @@
 #include "app/transaction.h"
 #include "app/ui/color_bar.h"
 #include "app/ui_context.h"
-#include "base/unique_ptr.h"
-#include "base/unique_ptr.h"
 #include "doc/palette.h"
 #include "doc/sprite.h"
 #include "render/quantization.h"
@@ -35,7 +34,6 @@ namespace app {
 class ColorQuantizationCommand : public Command {
 public:
   ColorQuantizationCommand();
-  Command* clone() const override { return new ColorQuantizationCommand(*this); }
 
 protected:
   bool onEnabled(Context* context) override;
@@ -114,18 +112,20 @@ void ColorQuantizationCommand::onExecute(Context* context)
 
     ContextReader reader(context);
     SpriteJob job(reader, "Color Quantization");
+    const bool newBlend = Preferences::instance().experimental.newBlend();
     job.startJobWithCallback(
-      [sprite, withAlpha, &tmpPalette, &job]{
+      [sprite, withAlpha, &tmpPalette, &job, newBlend]{
         render::create_palette_from_sprite(
           sprite, 0, sprite->lastFrame(),
           withAlpha, &tmpPalette,
-          &job);              // SpriteJob is a render::TaskDelegate
+          &job,
+          newBlend);     // SpriteJob is a render::TaskDelegate
       });
     job.waitJob();
     if (job.isCanceled())
       return;
 
-    base::UniquePtr<Palette> newPalette(
+    std::unique_ptr<Palette> newPalette(
       new Palette(createPal ? tmpPalette:
                               *get_current_palette()));
 
@@ -142,7 +142,7 @@ void ColorQuantizationCommand::onExecute(Context* context)
     }
 
     if (*curPalette != *newPalette)
-      job.transaction().execute(new cmd::SetPalette(sprite, frame, newPalette.get()));
+      job.tx()(new cmd::SetPalette(sprite, frame, newPalette.get()));
 
     set_current_palette(newPalette.get(), false);
     ui::Manager::getDefault()->invalidate();

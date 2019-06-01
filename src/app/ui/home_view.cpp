@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -14,10 +15,10 @@
 #include "app/app_menus.h"
 #include "app/commands/commands.h"
 #include "app/commands/params.h"
+#include "app/crash/data_recovery.h"
 #include "app/i18n/strings.h"
 #include "app/ui/data_recovery_view.h"
 #include "app/ui/main_window.h"
-#include "app/ui/news_listbox.h"
 #include "app/ui/recent_listbox.h"
 #include "app/ui/skin/skin_theme.h"
 #include "app/ui/workspace.h"
@@ -32,6 +33,10 @@
 #include "ui/textbox.h"
 #include "ui/view.h"
 
+#ifdef ENABLE_NEWS
+#include "app/ui/news_listbox.h"
+#endif
+
 namespace app {
 
 using namespace ui;
@@ -40,8 +45,10 @@ using namespace app::skin;
 HomeView::HomeView()
   : m_files(new RecentFilesListBox)
   , m_folders(new RecentFoldersListBox)
+#ifdef ENABLE_NEWS
   , m_news(new NewsListBox)
-  , m_dataRecovery(nullptr)
+#endif
+  , m_dataRecovery(App::instance()->dataRecovery())
   , m_dataRecoveryView(nullptr)
 {
   newFile()->Click.connect(base::Bind(&HomeView::onNewFile, this));
@@ -50,10 +57,11 @@ HomeView::HomeView()
 
   filesView()->attachToView(m_files);
   foldersView()->attachToView(m_folders);
+#ifdef ENABLE_NEWS
   newsView()->attachToView(m_news);
+#endif
 
   checkUpdate()->setVisible(false);
-  recoverSpritesPlaceholder()->setVisible(false);
 
   InitTheme.connect(
     [this]{
@@ -68,18 +76,24 @@ HomeView::~HomeView()
 {
 #ifdef ENABLE_DATA_RECOVERY
   if (m_dataRecoveryView) {
-    if (m_dataRecoveryView->parent())
-      App::instance()->workspace()->removeView(m_dataRecoveryView);
+    ASSERT(!m_dataRecoveryView->parent());
     delete m_dataRecoveryView;
   }
 #endif
 }
 
-void HomeView::showDataRecovery(crash::DataRecovery* dataRecovery)
+void HomeView::dataRecoverySessionsAreReady()
 {
 #ifdef ENABLE_DATA_RECOVERY
-  m_dataRecovery = dataRecovery;
-  recoverSpritesPlaceholder()->setVisible(true);
+  if (App::instance()->dataRecovery()->hasRecoverySessions()) {
+    // We highlight the "Recover Files" options because we came from a crash
+    SkinTheme* theme = static_cast<SkinTheme*>(this->theme());
+    recoverSprites()->setStyle(theme->styles.workspaceUpdateLink());
+    layout();
+  }
+  if (m_dataRecoveryView) {
+    m_dataRecoveryView->refreshListNotification();
+  }
 #endif
 }
 
@@ -97,6 +111,14 @@ bool HomeView::onCloseView(Workspace* workspace, bool quitting)
 {
   workspace->removeView(this);
   return true;
+}
+
+void HomeView::onAfterRemoveView(Workspace* workspace)
+{
+  if (m_dataRecoveryView &&
+      m_dataRecoveryView->parent()) {
+    workspace->removeView(m_dataRecoveryView);
+  }
 }
 
 void HomeView::onTabPopup(Workspace* workspace)
@@ -128,7 +150,11 @@ void HomeView::onResize(ui::ResizeEvent& ev)
 {
   headerPlaceholder()->setVisible(ev.bounds().h > 200*ui::guiscale());
   foldersPlaceholder()->setVisible(ev.bounds().h > 150*ui::guiscale());
+#ifdef ENABLE_NEWS
   newsPlaceholder()->setVisible(ev.bounds().w > 200*ui::guiscale());
+#else
+  newsPlaceholder()->setVisible(false);
+#endif
 
   ui::VBox::onResize(ev);
 }
@@ -176,11 +202,13 @@ void HomeView::onRecoverSprites()
   if (!m_dataRecoveryView) {
     m_dataRecoveryView = new DataRecoveryView(m_dataRecovery);
 
-    // Hide the "Recover Lost Sprites" button when the
-    // DataRecoveryView is empty.
+    // Restore the "Recover Files" link style when the
+    // DataRecoveryView is empty (so there is no more warning icon on
+    // it).
     m_dataRecoveryView->Empty.connect(
       [this]{
-        recoverSpritesPlaceholder()->setVisible(false);
+        SkinTheme* theme = static_cast<SkinTheme*>(this->theme());
+        recoverSprites()->setStyle(theme->styles.workspaceLink());
         layout();
       });
   }

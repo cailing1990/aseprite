@@ -11,12 +11,12 @@
 #include "app/context_flags.h"
 
 #include "app/context.h"
-#include "app/document.h"
+#include "app/doc.h"
 #include "app/modules/editors.h"
+#include "app/site.h"
 #include "app/ui/editor/editor.h"
 #include "doc/cel.h"
 #include "doc/layer.h"
-#include "doc/site.h"
 #include "doc/sprite.h"
 
 namespace app {
@@ -29,14 +29,14 @@ ContextFlags::ContextFlags()
 void ContextFlags::update(Context* context)
 {
   Site site = context->activeSite();
-  Document* document = static_cast<Document*>(site.document());
+  Doc* document = site.document();
 
   m_flags = 0;
 
   if (document) {
     m_flags |= HasActiveDocument;
 
-    if (document->lock(Document::ReadLock, 0)) {
+    if (document->lock(Doc::ReadLock, 0)) {
       m_flags |= ActiveDocumentIsReadable;
 
       if (document->isMaskVisible())

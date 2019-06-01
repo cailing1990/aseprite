@@ -26,7 +26,6 @@ using namespace ui;
 class AdvancedModeCommand : public Command {
 public:
   AdvancedModeCommand();
-  Command* clone() const override { return new AdvancedModeCommand(*this); }
 
 protected:
   void onExecute(Context* context) override;
@@ -62,7 +61,7 @@ void AdvancedModeCommand::onExecute(Context* context)
 
   if (oldMode == MainWindow::NormalMode &&
       pref.advancedMode.showAlert()) {
-    Key* key = KeyboardShortcuts::instance()->command(this->id().c_str());
+    KeyPtr key = KeyboardShortcuts::instance()->command(this->id().c_str());
     if (!key->accels().empty()) {
       app::gen::AdvancedMode window;
 

@@ -11,7 +11,7 @@
 #include "app/commands/command.h"
 #include "app/context.h"
 #include "app/context_access.h"
-#include "app/document.h"
+#include "app/doc.h"
 #include "app/launcher.h"
 
 namespace app {
@@ -19,7 +19,6 @@ namespace app {
 class OpenInFolderCommand : public Command {
 public:
   OpenInFolderCommand();
-  Command* clone() const override { return new OpenInFolderCommand(*this); }
 
 protected:
   bool onEnabled(Context* context) override;

@@ -11,7 +11,7 @@
 #include "app/app.h"
 #include "app/commands/command.h"
 #include "app/context_access.h"
-#include "app/document_undo.h"
+#include "app/doc_undo.h"
 #include "app/ini_file.h"
 #include "app/modules/editors.h"
 #include "app/modules/gui.h"
@@ -35,7 +35,6 @@ public:
   enum Type { Undo, Redo };
 
   UndoCommand(Type type);
-  Command* clone() const override { return new UndoCommand(*this); }
 
 protected:
   bool onEnabled(Context* context) override;
@@ -55,7 +54,7 @@ UndoCommand::UndoCommand(Type type)
 bool UndoCommand::onEnabled(Context* context)
 {
   ContextWriter writer(context);
-  Document* document(writer.document());
+  Doc* document(writer.document());
   return
     document != NULL &&
     ((m_type == Undo ? document->undoHistory()->canUndo():
@@ -65,13 +64,15 @@ bool UndoCommand::onEnabled(Context* context)
 void UndoCommand::onExecute(Context* context)
 {
   ContextWriter writer(context);
-  Document* document(writer.document());
-  DocumentUndo* undo = document->undoHistory();
+  Doc* document(writer.document());
+  DocUndo* undo = document->undoHistory();
 
 #ifdef ENABLE_UI
   Sprite* sprite = document->sprite();
   SpritePosition spritePosition;
-  const bool gotoModified = Preferences::instance().undo.gotoModified();
+  const bool gotoModified =
+    (Preferences::instance().undo.gotoModified() &&
+     context->isUIAvailable() && current_editor);
   if (gotoModified) {
     SpritePosition currentPosition(writer.site()->layer(),
                                    writer.site()->frame());
@@ -102,17 +103,21 @@ void UndoCommand::onExecute(Context* context)
   // range because there could be inexistent layers.
   std::istream* docRangeStream;
   if (m_type == Undo)
-    docRangeStream = undo->nextUndoDocumentRange();
+    docRangeStream = undo->nextUndoDocRange();
   else
-    docRangeStream = undo->nextRedoDocumentRange();
+    docRangeStream = undo->nextRedoDocRange();
 
   StatusBar* statusbar = StatusBar::instance();
   if (statusbar) {
-    statusbar->showTip(1000, "%s %s",
-      (m_type == Undo ? "Undid": "Redid"),
-      (m_type == Undo ?
-        undo->nextUndoLabel().c_str():
-        undo->nextRedoLabel().c_str()));
+    std::string msg;
+    if (m_type == Undo)
+      msg = "Undid " + undo->nextUndoLabel();
+    else
+      msg = "Redid " + undo->nextRedoLabel();
+    if (Preferences::instance().undo.showTooltip())
+      statusbar->showTip(1000, msg.c_str());
+    else
+      statusbar->setStatusText(0, msg.c_str());
   }
 #endif // ENABLE_UI
 
@@ -127,9 +132,10 @@ void UndoCommand::onExecute(Context* context)
   // (because new frames/layers could be added, positions that we
   // weren't able to reach before the undo).
   if (gotoModified) {
+    Site newSite = context->activeSite();
     SpritePosition currentPosition(
-      writer.site()->layer(),
-      writer.site()->frame());
+      newSite.layer(),
+      newSite.frame());
 
     if (spritePosition != currentPosition) {
       Layer* selectLayer = spritePosition.layer();
@@ -139,13 +145,13 @@ void UndoCommand::onExecute(Context* context)
     }
   }
 
-  // Update timeline range. We've to deserialize the DocumentRange at
+  // Update timeline range. We've to deserialize the DocRange at
   // this point when objects (possible layers) are re-created after
   // the undo and we can deserialize them.
   if (docRangeStream) {
     Timeline* timeline = App::instance()->timeline();
     if (timeline) {
-      DocumentRange docRange;
+      DocRange docRange;
       if (docRange.read(*docRangeStream))
         timeline->setRange(docRange);
     }

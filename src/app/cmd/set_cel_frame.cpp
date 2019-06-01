@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2016  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -10,9 +10,9 @@
 
 #include "app/cmd/set_cel_frame.h"
 
+#include "app/doc.h"
+#include "app/doc_event.h"
 #include "doc/cel.h"
-#include "doc/document.h"
-#include "doc/document_event.h"
 #include "doc/layer.h"
 #include "doc/sprite.h"
 
@@ -45,13 +45,13 @@ void SetCelFrame::onUndo()
 void SetCelFrame::onFireNotifications()
 {
   Cel* cel = this->cel();
-  doc::Document* doc = cel->sprite()->document();
-  DocumentEvent ev(doc);
+  Doc* doc = static_cast<Doc*>(cel->sprite()->document());
+  DocEvent ev(doc);
   ev.sprite(cel->layer()->sprite());
   ev.layer(cel->layer());
   ev.cel(cel);
   ev.frame(cel->frame());
-  doc->notify_observers<DocumentEvent&>(&DocumentObserver::onCelFrameChanged, ev);
+  doc->notify_observers<DocEvent&>(&DocObserver::onCelFrameChanged, ev);
 }
 
 } // namespace cmd

@@ -1,4 +1,5 @@
 // Aseprite Document Library
+// Copyright (c) 2018 Igara Studio S.A.
 // Copyright (c) 2001-2016 David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -19,9 +20,9 @@
 
 namespace doc {
 
-Image::Image(PixelFormat format, int width, int height)
+Image::Image(const ImageSpec& spec)
   : Object(ObjectType::Image)
-  , m_spec((ColorMode)format, width, height, 0)
+  , m_spec(spec)
 {
 }
 
@@ -48,13 +49,20 @@ int Image::getRowStrideSize(int pixels_per_row) const
 Image* Image::create(PixelFormat format, int width, int height,
                      const ImageBufferPtr& buffer)
 {
-  switch (format) {
-    case IMAGE_RGB:       return new ImageImpl<RgbTraits>(width, height, buffer);
-    case IMAGE_GRAYSCALE: return new ImageImpl<GrayscaleTraits>(width, height, buffer);
-    case IMAGE_INDEXED:   return new ImageImpl<IndexedTraits>(width, height, buffer);
-    case IMAGE_BITMAP:    return new ImageImpl<BitmapTraits>(width, height, buffer);
+  return Image::create(ImageSpec((ColorMode)format, width, height, 0), buffer);
+}
+
+// static
+Image* Image::create(const ImageSpec& spec,
+                     const ImageBufferPtr& buffer)
+{
+  switch (spec.colorMode()) {
+    case ColorMode::RGB:       return new ImageImpl<RgbTraits>(spec, buffer);
+    case ColorMode::GRAYSCALE: return new ImageImpl<GrayscaleTraits>(spec, buffer);
+    case ColorMode::INDEXED:   return new ImageImpl<IndexedTraits>(spec, buffer);
+    case ColorMode::BITMAP:    return new ImageImpl<BitmapTraits>(spec, buffer);
   }
-  return NULL;
+  return nullptr;
 }
 
 // static

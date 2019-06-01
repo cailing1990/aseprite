@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2016  David Capello
 //
 // This program is distributed under the terms of
@@ -41,7 +42,9 @@ namespace app {
     HomeView();
     ~HomeView();
 
-    void showDataRecovery(crash::DataRecovery* dataRecovery);
+    // When crash::DataRecovery finish to search for sessions, this
+    // function is called.
+    void dataRecoverySessionsAreReady();
 
     // TabView implementation
     std::string getTabText() override;
@@ -50,6 +53,7 @@ namespace app {
     // WorkspaceView implementation
     ui::Widget* getContentWidget() override { return this; }
     bool onCloseView(Workspace* workspace, bool quitting) override;
+    void onAfterRemoveView(Workspace* workspace) override;
     void onTabPopup(Workspace* workspace) override;
     void onWorkspaceViewSelected() override;
 

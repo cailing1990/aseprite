@@ -17,7 +17,7 @@
 #include "app/ui/editor/editor.h"
 #include "app/ui/skin/skin_theme.h"
 #include "base/bind.h"
-#include "she/surface.h"
+#include "os/surface.h"
 #include "ui/paint_event.h"
 #include "ui/resize_event.h"
 #include "ui/scroll_region_event.h"
@@ -121,8 +121,6 @@ void EditorView::onSetViewScroll(const gfx::Point& pt)
 
 void EditorView::onScrollRegion(ui::ScrollRegionEvent& ev)
 {
-  View::onScrollRegion(ev);
-
   gfx::Region& region = ev.region();
   Editor* editor = this->editor();
   ASSERT(editor);

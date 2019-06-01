@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018  Igara Studio S.A.
 // Copyright (C) 2016-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -15,8 +16,8 @@
 #include "app/commands/commands.h"
 #include "app/commands/params.h"
 #include "app/console.h"
-#include "app/document.h"
-#include "app/document_exporter.h"
+#include "app/doc.h"
+#include "app/doc_exporter.h"
 #include "app/file/palette_file.h"
 #include "app/ui_context.h"
 #include "base/convert_to.h"
@@ -27,11 +28,12 @@
 #include "doc/sprite.h"
 
 #ifdef ENABLE_SCRIPTING
-  #include "app/script/app_scripting.h"
-  #include "script/engine_delegate.h"
+  #include "app/app.h"
+  #include "app/script/engine.h"
 #endif
 
 #include <iostream>
+#include <memory>
 
 namespace app {
 
@@ -91,6 +93,9 @@ void DefaultCliDelegate::saveFile(Context* ctx, const CliOpenFile& cof)
     params.set("slice", cof.slice.c_str());
   }
 
+  if (cof.ignoreEmpty)
+    params.set("ignoreEmpty", "true");
+
   ctx->executeCommand(saveAsCommand, params);
 }
 
@@ -98,7 +103,7 @@ void DefaultCliDelegate::loadPalette(Context* ctx,
                                      const CliOpenFile& cof,
                                      const std::string& filename)
 {
-  base::UniquePtr<doc::Palette> palette(load_palette(filename.c_str()));
+  std::unique_ptr<doc::Palette> palette(load_palette(filename.c_str()));
   if (palette) {
     Command* loadPalCommand = Commands::instance()->byId(CommandId::LoadPalette());
     Params params;
@@ -112,24 +117,24 @@ void DefaultCliDelegate::loadPalette(Context* ctx,
   }
 }
 
-void DefaultCliDelegate::exportFiles(Context* ctx, DocumentExporter& exporter)
+void DefaultCliDelegate::exportFiles(Context* ctx, DocExporter& exporter)
 {
   LOG("APP: Exporting sheet...\n");
 
-  base::UniquePtr<app::Document> spriteSheet(exporter.exportSheet(ctx));
+  std::unique_ptr<Doc> spriteSheet(exporter.exportSheet(ctx));
 
   // Sprite sheet isn't used, we just delete it.
 
   LOG("APP: Export sprite sheet: Done\n");
 }
 
-void DefaultCliDelegate::execScript(const std::string& filename)
-{
 #ifdef ENABLE_SCRIPTING
-  script::StdoutEngineDelegate delegate;
-  AppScripting engine(&delegate);
-  engine.evalFile(filename);
-#endif
+void DefaultCliDelegate::execScript(const std::string& filename,
+                                    const Params& params)
+{
+  if (!App::instance()->scriptEngine()->evalFile(filename, params))
+    throw std::runtime_error("Error executing script");
 }
+#endif // ENABLE_SCRIPTING
 
 } // namespace app

@@ -1,4 +1,5 @@
 // Aseprite Rener Library
+// Copyright (C) 2019 Igara Studio S.A.
 // Copyright (c) 2001-2015, 2017 David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -11,7 +12,6 @@
 #include "doc/frame.h"
 #include "doc/pixel_format.h"
 #include "render/color_histogram.h"
-#include "render/dithering_algorithm.h"
 
 #include <vector>
 
@@ -23,7 +23,7 @@ namespace doc {
 }
 
 namespace render {
-  class DitheringMatrix;
+  class Dithering;
   class TaskDelegate;
 
   class PaletteOptimizer {
@@ -43,7 +43,8 @@ namespace render {
     const doc::frame_t toFrame,
     const bool withAlpha,
     doc::Palette* newPalette, // Can be NULL to create a new palette
-    TaskDelegate* delegate);
+    TaskDelegate* delegate,
+    const bool newBlend);
 
   // Changes the image pixel format. The dithering method is used only
   // when you want to convert from RGB to Indexed.
@@ -51,8 +52,7 @@ namespace render {
     const doc::Image* src,
     doc::Image* dst,         // Can be NULL to create a new image
     doc::PixelFormat pixelFormat,
-    render::DitheringAlgorithm ditheringAlgorithm,
-    const render::DitheringMatrix& ditheringMatrix,
+    const render::Dithering& dithering,
     const doc::RgbMap* rgbmap,
     const doc::Palette* palette,
     bool is_background,

@@ -1,4 +1,5 @@
 // Aseprite UI Library
+// Copyright (C) 2018  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -11,7 +12,7 @@
 #include "ui/message.h"
 
 #include "base/memory.h"
-#include "she/system.h"
+#include "os/system.h"
 #include "ui/manager.h"
 #include "ui/widget.h"
 
@@ -22,9 +23,11 @@ namespace ui {
 Message::Message(MessageType type, KeyModifiers modifiers)
   : m_type(type)
   , m_flags(0)
+  , m_recipient(nullptr)
+  , m_commonAncestor(nullptr)
 {
-  if (modifiers == kKeyUninitializedModifier && she::instance())
-    m_modifiers = she::instance()->keyModifiers();
+  if (modifiers == kKeyUninitializedModifier && os::instance())
+    m_modifiers = os::instance()->keyModifiers();
   else
     m_modifiers = modifiers;
 }
@@ -33,38 +36,17 @@ Message::~Message()
 {
 }
 
-void Message::addRecipient(Widget* widget)
+void Message::setRecipient(Widget* widget)
 {
+  ASSERT(m_recipient == nullptr);
   ASSERT_VALID_WIDGET(widget);
-
-  m_recipients.push_back(widget);
-}
-
-void Message::prependRecipient(Widget* widget)
-{
-  ASSERT_VALID_WIDGET(widget);
-
-  m_recipients.insert(m_recipients.begin(), widget);
+  m_recipient = widget;
 }
 
 void Message::removeRecipient(Widget* widget)
 {
-  for (WidgetsList::iterator
-         it = m_recipients.begin(),
-         end = m_recipients.end(); it != end; ++it) {
-    if (*it == widget)
-      *it = NULL;
-  }
-}
-
-void Message::broadcastToChildren(Widget* widget)
-{
-  ASSERT_VALID_WIDGET(widget);
-
-  for (auto child : widget->children())
-    broadcastToChildren(child);
-
-  addRecipient(widget);
+  if (m_recipient == widget)
+    m_recipient = nullptr;
 }
 
 KeyMessage::KeyMessage(MessageType type,

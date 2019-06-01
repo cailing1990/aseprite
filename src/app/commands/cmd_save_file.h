@@ -14,7 +14,7 @@
 #include <string>
 
 namespace app {
-  class Document;
+  class Doc;
 
   class SaveFileBaseCommand : public Command {
   public:
@@ -33,7 +33,7 @@ namespace app {
       const std::string& forbiddenFilename = std::string());
     void saveDocumentInBackground(
       const Context* context,
-      app::Document* document,
+      Doc* document,
       const std::string& filename,
       const bool markAsSaved);
 
@@ -44,6 +44,8 @@ namespace app {
     std::string m_slice;
     doc::SelectedFrames m_selFrames;
     bool m_adjustFramesByFrameTag;
+    bool m_useUI;
+    bool m_ignoreEmpty;
   };
 
 } // namespace app

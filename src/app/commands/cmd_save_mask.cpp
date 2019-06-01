@@ -24,7 +24,6 @@ namespace app {
 class SaveMaskCommand : public Command {
 public:
   SaveMaskCommand();
-  Command* clone() const override { return new SaveMaskCommand(*this); }
 
 protected:
   bool onEnabled(Context* context) override;
@@ -44,7 +43,7 @@ bool SaveMaskCommand::onEnabled(Context* context)
 void SaveMaskCommand::onExecute(Context* context)
 {
   const ContextReader reader(context);
-  const Document* document(reader.document());
+  const Doc* document(reader.document());
 
   base::paths exts = { "msk" };
   base::paths selFilename;

@@ -1,9 +1,11 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
 
+#include "base/gcd.h"
 #include "base/pi.h"
 
 #include <cmath>
@@ -237,6 +239,7 @@ public:
 
     gfx::Point offset = loop->statusBarPositionOffset();
     char buf[1024];
+    int gcd = base::gcd(w, h);
     sprintf(buf, ":start: %3d %3d :end: %3d %3d :size: %3d %3d :distance: %.1f",
             stroke[0].x+offset.x, stroke[0].y+offset.y,
             stroke[1].x+offset.x, stroke[1].y+offset.y,
@@ -252,6 +255,10 @@ public:
                            static_cast<double>(stroke[1].x-stroke[0].x));
       sprintf(buf+strlen(buf), " :angle: %.1f", 180.0 * angle / PI);
     }
+
+    // Aspect ratio at the end
+    sprintf(buf+strlen(buf), " :aspect_ratio: %d:%d",
+            w/gcd, h/gcd);
 
     text = buf;
   }

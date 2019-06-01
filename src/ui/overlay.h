@@ -1,4 +1,5 @@
 // Aseprite UI Library
+// Copyright (C) 2018  Igara Studio S.A.
 // Copyright (C) 2001-2016  David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -12,7 +13,7 @@
 #include "gfx/point.h"
 #include "ui/base.h"
 
-namespace she {
+namespace os {
   class Surface;
 }
 
@@ -25,18 +26,18 @@ namespace ui {
     static const ZOrder NormalZOrder = 0;
     static const ZOrder MouseZOrder = 5000;
 
-    Overlay(she::Surface* overlaySurface, const gfx::Point& pos, ZOrder zorder = 0);
+    Overlay(os::Surface* overlaySurface, const gfx::Point& pos, ZOrder zorder = 0);
     ~Overlay();
 
-    she::Surface* setSurface(she::Surface* newSurface);
+    os::Surface* setSurface(os::Surface* newSurface);
 
     const gfx::Point& position() const { return m_pos; }
     gfx::Rect bounds() const;
 
-    void captureOverlappedArea(she::Surface* screen);
-    void restoreOverlappedArea(she::Surface* screen);
+    void captureOverlappedArea(os::Surface* screen);
+    void restoreOverlappedArea(const gfx::Rect& restoreBounds);
 
-    void drawOverlay(she::Surface* screen);
+    void drawOverlay();
     void moveOverlay(const gfx::Point& newPos);
 
     bool operator<(const Overlay& other) const {
@@ -44,8 +45,13 @@ namespace ui {
     }
 
   private:
-    she::Surface* m_surface;
-    she::Surface* m_overlap;
+    os::Surface* m_surface;
+    os::Surface* m_overlap;
+
+    // Surface where we captured the overlapped (m_overlap)
+    // region. It's nullptr if the overlay wasn't drawn yet.
+    os::Surface* m_captured;
+
     gfx::Point m_pos;
     ZOrder m_zorder;
   };

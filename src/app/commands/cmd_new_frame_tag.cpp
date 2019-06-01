@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2001-2017  David Capello
+// Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
@@ -13,7 +13,7 @@
 #include "app/commands/command.h"
 #include "app/context.h"
 #include "app/context_access.h"
-#include "app/transaction.h"
+#include "app/tx.h"
 #include "app/ui/frame_tag_window.h"
 #include "app/ui/timeline/timeline.h"
 #include "doc/frame_tag.h"
@@ -27,7 +27,6 @@ using namespace doc;
 class NewFrameTagCommand : public Command {
 public:
   NewFrameTagCommand();
-  Command* clone() const override { return new NewFrameTagCommand(*this); }
 
 protected:
   bool onEnabled(Context* context) override;
@@ -54,14 +53,14 @@ void NewFrameTagCommand::onExecute(Context* context)
 
   auto range = App::instance()->timeline()->range();
   if (range.enabled() &&
-      (range.type() == DocumentRange::kFrames ||
-       range.type() == DocumentRange::kCels)) {
+      (range.type() == DocRange::kFrames ||
+       range.type() == DocRange::kCels)) {
     from = range.selectedFrames().firstFrame();
     to = range.selectedFrames().lastFrame();
   }
 
-  base::UniquePtr<FrameTag> frameTag(new FrameTag(from, to));
-  FrameTagWindow window(sprite, frameTag);
+  std::unique_ptr<FrameTag> frameTag(new FrameTag(from, to));
+  FrameTagWindow window(sprite, frameTag.get());
   if (!window.show())
     return;
 
@@ -73,10 +72,10 @@ void NewFrameTagCommand::onExecute(Context* context)
 
   {
     ContextWriter writer(reader);
-    Transaction transaction(writer.context(), "New Frames Tag");
-    transaction.execute(new cmd::AddFrameTag(writer.sprite(), frameTag));
+    Tx tx(writer.context(), "New Frames Tag");
+    tx(new cmd::AddFrameTag(writer.sprite(), frameTag.get()));
     frameTag.release();
-    transaction.commit();
+    tx.commit();
   }
 
   App::instance()->timeline()->invalidate();

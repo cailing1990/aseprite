@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018-2019  Igara Studio S.A.
 // Copyright (C) 2016-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -8,7 +9,7 @@
 
 #include "app/cli/app_options.h"
 #include "app/cli/cli_processor.h"
-#include "app/document_exporter.h"
+#include "app/doc_exporter.h"
 
 #include <initializer_list>
 
@@ -32,8 +33,11 @@ public:
   void beforeOpenFile(const CliOpenFile& cof) override { }
   void afterOpenFile(const CliOpenFile& cof) override { }
   void saveFile(Context* ctx, const CliOpenFile& cof) override { }
-  void exportFiles(Context* ctx, DocumentExporter& exporter) override { }
-  void execScript(const std::string& filename) override { }
+  void exportFiles(Context* ctx, DocExporter& exporter) override { }
+#ifdef ENABLE_SCRIPTING
+  void execScript(const std::string& filename,
+                  const Params& params) override { }
+#endif
 
   bool helpWasShown() const { return m_helpWasShown; }
   bool versionWasShown() const { return m_versionWasShown; }
@@ -63,7 +67,8 @@ AppOptions args(std::initializer_list<const char*> l) {
 TEST(Cli, None)
 {
   CliTestDelegate d;
-  CliProcessor p(&d, args({ }));
+  AppOptions a = args({ });
+  CliProcessor p(&d, a);
   p.process(nullptr);
   EXPECT_TRUE(!d.helpWasShown());
   EXPECT_TRUE(!d.versionWasShown());
@@ -72,7 +77,8 @@ TEST(Cli, None)
 TEST(Cli, Help)
 {
   CliTestDelegate d;
-  CliProcessor p(&d, args({ "--help" }));
+  AppOptions a = args({ "--help" });
+  CliProcessor p(&d, a);
   p.process(nullptr);
   EXPECT_TRUE(d.helpWasShown());
 }
@@ -80,7 +86,8 @@ TEST(Cli, Help)
 TEST(Cli, Version)
 {
   CliTestDelegate d;
-  CliProcessor p(&d, args({ "--version" }));
+  AppOptions a = args({ "--version" });
+  CliProcessor p(&d, a);
   p.process(nullptr);
   EXPECT_TRUE(d.versionWasShown());
 }

@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018-2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -12,12 +13,11 @@
 #include "app/app_brushes.h"
 #endif
 
-#include "base/mutex.h"
 #include "base/paths.h"
-#include "base/unique_ptr.h"
 #include "doc/pixel_format.h"
 #include "obs/signal.h"
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -31,11 +31,18 @@ namespace ui {
 
 namespace app {
 
+#ifdef ENABLE_SCRIPTING
+  namespace script {
+    class Engine;
+  }
+#endif
+
+  class AppMod;
   class AppOptions;
   class BackupIndicator;
   class Context;
   class ContextBar;
-  class Document;
+  class Doc;
   class Extensions;
   class INotificationDelegate;
   class InputChain;
@@ -61,7 +68,7 @@ namespace app {
 
   class App {
   public:
-    App();
+    App(AppMod* mod = nullptr);
     ~App();
 
     static App* instance() { return m_instance; }
@@ -80,11 +87,12 @@ namespace app {
     void initialize(const AppOptions& options);
     void run();
 
+    AppMod* mod() const { return m_mod; }
     tools::ToolBox* toolBox() const;
     tools::Tool* activeTool() const;
     tools::ActiveToolManager* activeToolManager() const;
     RecentFiles* recentFiles() const;
-    MainWindow* mainWindow() const { return m_mainWindow; }
+    MainWindow* mainWindow() const { return m_mainWindow.get(); }
     Workspace* workspace() const;
     ContextBar* contextBar() const;
     Timeline* timeline() const;
@@ -99,16 +107,20 @@ namespace app {
     }
 
     void showNotification(INotificationDelegate* del);
-    // This can be called from a non-UI thread.
     void showBackupNotification(bool state);
     void updateDisplayTitleBar();
 
     InputChain& inputChain();
 #endif
 
+#ifdef ENABLE_SCRIPTING
+    script::Engine* scriptEngine() { return m_engine.get(); }
+#endif
+
     // App Signals
     obs::signal<void()> Exit;
     obs::signal<void()> PaletteChange;
+    obs::signal<void()> ColorSpaceChange;
 
   private:
     class CoreModules;
@@ -117,21 +129,25 @@ namespace app {
 
     static App* m_instance;
 
-    base::UniquePtr<ui::UISystem> m_uiSystem;
+    AppMod* m_mod;
+    std::unique_ptr<ui::UISystem> m_uiSystem;
     CoreModules* m_coreModules;
     Modules* m_modules;
     LegacyModules* m_legacy;
     bool m_isGui;
     bool m_isShell;
-    base::UniquePtr<MainWindow> m_mainWindow;
+    std::unique_ptr<MainWindow> m_mainWindow;
     base::paths m_files;
 #ifdef ENABLE_UI
-    base::UniquePtr<AppBrushes> m_brushes;
+    std::unique_ptr<AppBrushes> m_brushes;
     BackupIndicator* m_backupIndicator;
-    base::mutex m_backupIndicatorMutex;
 #endif // ENABLE_UI
+#ifdef ENABLE_SCRIPTING
+    std::unique_ptr<script::Engine> m_engine;
+#endif
   };
 
+  void app_update_current_palette();
   void app_refresh_screen();
   void app_rebuild_documents_tabs();
   PixelFormat app_get_current_pixel_format();

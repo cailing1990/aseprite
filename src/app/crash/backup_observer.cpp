@@ -1,10 +1,11 @@
 // Aseprite
+// Copyright (C) 2018-2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
 
-// Uncomment if you want to test the backup process each 5 secondsh
+// Uncomment if you want to test the backup process each 5 seconds.
 //#define TEST_BACKUPS_WITH_A_SHORT_PERIOD
 
 // Uncomment if you want to check that backups are correctly saved
@@ -18,20 +19,18 @@
 #include "app/crash/backup_observer.h"
 
 #include "app/app.h"
+#include "app/context.h"
+#include "app/crash/recovery_config.h"
 #include "app/crash/session.h"
-#include "app/document.h"
-#include "app/document_access.h"
-#include "app/document_diff.h"
+#include "app/doc.h"
+#include "app/doc_access.h"
+#include "app/doc_diff.h"
 #include "app/pref/preferences.h"
 #include "base/bind.h"
 #include "base/chrono.h"
 #include "base/remove_from_container.h"
 #include "base/scoped_lock.h"
-#include "doc/context.h"
-
-#ifdef TEST_BACKUP_INTEGRITY
 #include "ui/system.h"
-#endif
 
 namespace app {
 namespace crash {
@@ -41,21 +40,28 @@ namespace {
 class SwitchBackupIcon {
 public:
   SwitchBackupIcon() {
-    App* app = App::instance();
-    if (app)
-      app->showBackupNotification(true);
+    ui::execute_from_ui_thread(
+      []{
+        if (App* app = App::instance())
+          app->showBackupNotification(true);
+      });
   }
   ~SwitchBackupIcon() {
-    App* app = App::instance();
-    if (app)
-      app->showBackupNotification(false);
+    ui::execute_from_ui_thread(
+      []{
+        if (App* app = App::instance())
+          app->showBackupNotification(false);
+      });
   }
 };
 
 }
 
-BackupObserver::BackupObserver(Session* session, doc::Context* ctx)
-  : m_session(session)
+BackupObserver::BackupObserver(RecoveryConfig* config,
+                               Session* session,
+                               Context* ctx)
+  : m_config(config)
+  , m_session(session)
   , m_ctx(ctx)
   , m_done(false)
   , m_thread(base::Bind<void>(&BackupObserver::backgroundThread, this))
@@ -76,26 +82,27 @@ void BackupObserver::stop()
   m_done = true;
 }
 
-void BackupObserver::onAddDocument(doc::Document* document)
+void BackupObserver::onAddDocument(Doc* document)
 {
   TRACE("RECO: Observe document %p\n", document);
   base::scoped_lock hold(m_mutex);
-  m_documents.push_back(static_cast<app::Document*>(document));
+  m_documents.push_back(document);
 }
 
-void BackupObserver::onRemoveDocument(doc::Document* document)
+void BackupObserver::onRemoveDocument(Doc* doc)
 {
-  TRACE("RECO: Remove document %p\n", document);
+  TRACE("RECO: Remove document %p\n", doc);
   {
     base::scoped_lock hold(m_mutex);
-    base::remove_from_container(m_documents, static_cast<app::Document*>(document));
+    base::remove_from_container(m_documents, doc);
   }
-  m_session->removeDocument(static_cast<app::Document*>(document));
+  // TODO save backup data of the closed document in a background thread
+  m_session->removeDocument(doc);
 }
 
 void BackupObserver::backgroundThread()
 {
-  int normalPeriod = int(60.0*Preferences::instance().general.dataRecoveryPeriod());
+  int normalPeriod = int(60.0*m_config->dataRecoveryPeriod);
   int lockedPeriod = 5;
 #ifdef TEST_BACKUPS_WITH_A_SHORT_PERIOD
   normalPeriod = 5;
@@ -115,7 +122,7 @@ void BackupObserver::backgroundThread()
       base::Chrono chrono;
       bool somethingLocked = false;
 
-      for (app::Document* doc : m_documents) {
+      for (Doc* doc : m_documents) {
         try {
           if (doc->needsBackup()) {
             if (doc->inhibitBackup()) {
@@ -128,10 +135,10 @@ void BackupObserver::backgroundThread()
             }
 #ifdef TEST_BACKUP_INTEGRITY
             else {
-              DocumentReader reader(doc, 500);
-              std::unique_ptr<app::Document> copy(
-                m_session->restoreBackupDocById(doc->id()));
-              DocumentDiff diff = compare_docs(doc, copy.get());
+              DocReader reader(doc, 500);
+              std::unique_ptr<Doc> copy(
+                m_session->restoreBackupDocById(doc->id(), nullptr));
+              DocDiff diff = compare_docs(doc, copy.get());
               if (diff.anything) {
                 TRACE("RECO: Differences (%s/%s/%s/%s/%s/%s/%s)\n",
                       diff.canvas ? "canvas": "",
@@ -140,9 +147,11 @@ void BackupObserver::backgroundThread()
                       diff.frameTags ? "frameTags": "",
                       diff.palettes ? "palettes": "",
                       diff.layers ? "layers": "",
-                      diff.cels ? "cels": "");
+                      diff.cels ? "cels": "",
+                      diff.images ? "images": "",
+                      diff.colorProfiles ? "colorProfiles": "");
 
-                app::Document* copyDoc = copy.release();
+                Doc* copyDoc = copy.release();
                 ui::execute_from_ui_thread(
                   [this, copyDoc] {
                     m_ctx->documents().add(copyDoc);
